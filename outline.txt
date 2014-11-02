@@ -1,0 +1,3 @@
+coadd all spectra from the same instrument
+check the overlaps - discard lower res overlap data unless the SN exceeds that of the rebinned higher res
+coadd trimmed spectra
