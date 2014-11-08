@@ -64,7 +64,8 @@ def splice(spectbla, spectblb):
     
     One or two wavelengths are chosen for the switch from one spectrum to
     limit pixel-to-pixel differences. These switches are determined such that
-    overall S/N is maximized.
+    overall S/N is maximized. If the spectra do not overlap, they are merely
+    stacked in order.
     """
     #sort the two spectra
     both = [spectbla, spectblb]
@@ -134,12 +135,34 @@ def powerbin(specfile, R=1000.0):
 def spectbl(specfile):
     """
     A catch-all function to read in FITS spectra from all variety of 
-    instruments and provide standardized output as an astropy table.
+    instruments and provide standardized output as a list of astropy tables.
     
-    The standardized filename 'aaa bbb ccccc ... .fits, where aaa is the 
-    observatory, bbb is the instrument, and ccccc is the filter/grating is used
-    to determine how to parse the FITS file.
+    The standardized filename 'w aaa bbb ccccc ... .fits, where aaa is the 
+    observatory, bbb is the instrument, and ccccc is the filter/grating (w is 
+    the spectral band) is used to determine how to parse the FITS file .
+    
+    The table has columns 'w0','w1' for the wavelength edges, 'flux', 'error',
+    'exptime', and 'instrument'. The 'instrument' column contains a number
+    identifying the instrument configuration.
+    
+    Instrument Identifiers
+    ----------------------
+    0 : HST COS G130M
+    1 : HST COS G160M
+    2 : HST COS G230L
+    3 : HST STIS E140M
+    4 : HST STIS E230M
+    5 : HST STIS E230H
+    6 : HST STIS G140M
+    7 : HST STIS G230L
+    8 : HST STIS G430L
+    9 : XMM-NEWTON
     """
+    observatory, instrument, grating = specfile[:3], specfile[4:7], specfile[8:13]
+    if observatory.upper() == 'HST':
+        spec = fits.open('specfile')
+        
+def coadd(spectbls):
     pass
 
 def __spectbl_rebin(spec, newedges):
