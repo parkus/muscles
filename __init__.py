@@ -1,2 +1,5 @@
 import reduce
-import organize
+import database
+import io
+import plot
+from database import instruments
