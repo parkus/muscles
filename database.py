@@ -6,10 +6,14 @@ Created on Fri Nov 07 15:51:54 2014
 """
 import os
 from astropy.io import fits
+from numpy import array, nonzero, unique
+import io
+from muscles import utils
 
 instruments = ['hst_cos_g130m','hst_cos_g160m','hst_cos_g230l','hst_sts_e140m',
                'hst_sts_e230m','hst_sts_e230h','hst_sts_g140m','hst_sts_g230l',
                'hst_sts_g430l','xmm_mos_-----','mod_lya_kevin','mod_euv_-----']
+foldersbyband = {'u':'uv', 'v':'visible', 'x':'x-ray'}
 
 def allspecfiles(target, folder='.'):
     """Find all the spectra for the target within the subdirectories of path
@@ -30,6 +34,73 @@ def allspecfiles(target, folder='.'):
         files.extend(specfiles)
     
     return files
+
+def parse_instrument(filename):
+    """Parse out the instrument portion of a spectrum filename."""
+    name = os.path.basename(filename)
+    pieces = name.split('_')
+    return '_'.join(pieces[1:4])
+
+def coaddpath(specpath):
+    """Construct standardized name for coadd FITS file within same directory as 
+    specfile."""
+    specdir = os.path.dirname(specpath)
+    specname = os.path.basename(specpath)
+    parts = specname.split('_')
+    coaddname = '_'.join(parts[:5]) + '_coadd.fits'
+    return os.path.join(specdir, coaddname)
+    
+def coadd_swap(specfile, datafolder='.'):
+    """Search for coadds that cover groups of the specfiles and replace those
+    groups with the coadds.
+    """
+    groups = utils.group_by_instrument(spectbls)
+    for group in groups:
+        coaddfile = find_coadd(group, datafolder)
+        if len(coaddfile):
+            group = [coaddfile]
+    return 
+
+def find_coadd(spectbls, datafolder='.', returntbl=False):
+    #FIXME: not sure if I actually need this as it uses time to open tables
+    #I should probably just do this at the file level
+    """
+    Look for a FITS file that is the coaddition of the provided spectlbs.
+    Returns the coadd spectbl if it exists and it contains data from all of the
+    provided spectbls otherwise returns none. 
+    """
+    #parse sourcefiles
+    sourcefiles = []
+    for spec in spectbls: sourcefiles.extend(spec.meta['sourcefiles'])
+    
+    #check for multiple configurations
+    instruments = array(map(parse_instrument, sourcefiles))
+    if any(instruments[:-1] != instruments[:-1]):
+        return NotImplemented("...can't deal with different data sources.")
+    
+    #get the filename for one of the source files
+    specname = spectbls[0].meta['sourcefiles'][0]
+    
+    #construct standard 
+    band = specname[0] #should be 'u', 'v', or 'x'
+    subfolder = foldersbyband[band]
+    coaddname = coaddpath(specname)
+    coaddfile = os.path.join(datafolder, subfolder, coaddname)
+    
+    try:
+        coadd = io.read(coaddfile)
+        
+        #check that the coadd contains the same data as the spectbls
+        #return none if any is missing
+        csourcefiles = coadd.meta['sourcefiles']
+        for sf in sourcefiles:
+            if sf not in csourcefiles:
+                return None
+        return coadd if returntbl else return coaddfile
+        
+    #if the file doesn't exist, return None
+    except IOError:
+        return None
 
 def auto_rename(folder):
     """

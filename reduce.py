@@ -10,7 +10,7 @@ from astropy.table import Table, vstack
 import my_numpy as mnp
 from math import sqrt
 import specutils
-from muscles.database import instruments
+from muscles import database as db
 from muscles import utils
 
 def panspectrum(spectbls, R=1000.0):
@@ -22,43 +22,36 @@ def panspectrum(spectbls, R=1000.0):
     listed in order of descending quality. 
     """
     #make sure all spectra are of the same star
-    star = __same_star(spectbls)
+    __same_star(spectbls)
     
     #make sure spectra are each from a single source
     for i,s in enumerate(spectbls):
         try: 
-            __same_inst([s])['instrument']
+            __same_instrument([s])
         except ValueError:
             raise ValueError('More than one instrument used in spectbl {}'.format(i))
     
     #coadd all spectra from the same configuration
-    allconfigs = [s['instrument'][0] for s in spectbls]
-    configs = np.unique(allconfigs)
+    groups = db.group_by_instrument(spectbls)
     coadds = []
-    for config in configs:
-        ctbls = filter(lambda tbl: all(tbl['instrument'] == config), spectbls)
-        if len(ctbls) == 1:
-            coadds.extend(ctbls)
+    for group in groups:
+        if len(group) == 1:
+            coadds.extend(group)
         else:
-            coadds.append(coadd(ctbls))
+            coadds.append(coadd(group))
     
     #parse the modeled from the observed spectra
-    models = [i for i in range(len(instruments)) if 'mod' in instruments[i]]
-    ismodel = lambda spec: spec['instrument'][0] in models
+    ismodel = lambda spec: 'mod' in spec.meta['filename']
     modelspecs = filter(ismodel, coadds)
     obsspecs = filter(lambda spec: not ismodel(spec), coadds)
     
-    #normalize the measured spectra
-    #run through all possible pairs to see if they overlap. If so, normalize
-    #according to their input order
+    #normalize the measured spectra according to their input order if they
+    #overlap
     N = len(obsspecs)
     for i in range(N):
         for j in np.arange(i+1,N):
             if __overlapping(obsspecs[i], obsspecs[j]):
-                posi,posj = [allconfigs.index(configs[k]) for k in [i,j]]
-                if posi < posj: obsspecs[j] = normalize(obsspecs[i], obsspecs[j])
-                if posj < posi: obsspecs[i] = normalize(obsspecs[j], obsspecs[i])
-    
+                obsspecs[j] = normalize(obsspecs[i], obsspecs[j])
     
     #splice together all the measured spectra based on S/N
     catspec = reduce(smartsplice, obsspecs)
@@ -265,15 +258,15 @@ def coadd(spectbls, maskbaddata=True):
     w0, w1, f, e, expt, dq = map(listify, cols)
     we = [np.append(ww0,ww1[-1]) for ww0,ww1 in zip(w0,w1)]
     if maskbaddata:
-        mask = dq > 0
-        cwe, cf, ce, cexpt = specutils.coadd(we, f, e, expt, mask)
-        cw0, cw1 = we[:-1], we[1:]
+        masks = [ddq > 0 for ddq in dq]
+        cwe, cf, ce, cexpt = specutils.coadd(we, f, e, expt, masks)
+        cw0, cw1 = cwe[:-1], we[1:]
         goodbins = (cexpt > 0)
         cw0,cw1,cf,ce,cexpt = [v[goodbins] for v in [cw0, cw1, cf, ce, cexpt]]
         dq = 0
     else:
         cwe, cf, ce, cexpt = specutils.coadd(we, f, e, expt)
-        cw0, cw1 = we[:-1], we[1:]
+        cw0, cw1 = cwe[:-1], cwe[1:]
         dq = np.nan
         
     return utils.vecs2spectbl(cw0,cw1,cf,ce,cexpt,dq,inst,star,sourcefiles)
@@ -302,14 +295,15 @@ def __overlapping(spectbl0, spectbl1):
     
 def __same_instrument(spectbls):
     instruments = []
-    for s in spectbls: instruments.extend(s)
+    for s in spectbls: instruments.extend(s['instrument'].data)
+    instruments = np.array(instruments)
     if any(instruments[:-1] != instruments[1:]):
         raise ValueError('There are multiple instruments present in the '
                          'spectbls.')
     return instruments[0]
 
 def __same_star(spectbls):
-    stars = [s.meta['star'] for s in spectbls]
+    stars = np.array([s.meta['star'] for s in spectbls])
     if any(stars[1:] != stars[:-1]):
         raise ValueError('More than one target in the provided spectra.')
     return stars[0]

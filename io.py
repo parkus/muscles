@@ -37,20 +37,30 @@ def readfits(specfile):
     """Read a fits file into standardized table."""
     
     insti = __inst_i(specfile)
-    observatory = insti.split('_')[0].upper()
+    inststr = instruments[insti]
+    observatory = inststr.split('_')[0].upper()
     
     if observatory == 'HST':
         spec = fits.open(specfile)
-        exptime = spec[1].header['exptime']
-        xnames = ['wavelength','flux','error', 'dq']
-        wmid, flux, err, flags = [spec[1].data[s] for s in xnames]
-        wedges = np.array([mids2edges(wm, 'left', 'linear-x') for wm in wmid])
-        w0, w1 = wedges[:,:-1], wedges[:,1:]
+        sd, sh = spec[1].data, spec[1].header
+        if 'custom' in specfile: #TODO: update once I have x2d extraction
+            exptime = sd['exptime'][0]
+            w0, w1 = sd['w0'], sd['w1']
+            flags = np.array([np.nan]*len(w0))
+        else: 
+            exptime = sh['exptime']
+            wmid, flags = sd['wavelength'], sd['dq']
+            wedges = np.array([mids2edges(wm, 'left', 'linear-x') for wm in wmid])
+            w0, w1 = wedges[:,:-1], wedges[:,1:]
+        flux, err = sd['flux'], sd['error']
         shape = flux.shape
         iarr = np.ones(shape)*insti
         exptarr = np.ones(shape)*exptime
-        datas = np.array([w0,w1,flux,err,exptarr,flags,iarr])
-        datas = datas.swapaxes(0,1)
+        if 'custom' in specfile:
+            datas = [[w0,w1,flux,err,exptarr,flags,iarr]]
+        else:
+            datas = np.array([w0,w1,flux,err,exptarr,flags,iarr])
+            datas = datas.swapaxes(0,1)
     elif observatory == 'XMM':
         spec = fits.open(specfile)
         colnames = ['Wavelength', 'BinWidth', 'Flux', 'FluxError', 'Flux2']
@@ -161,10 +171,9 @@ def writefits(spectbl, name, overwrite=False):
         ftbl.append(idhdu)
         ftbl.flush()   
     
-def __maketbl(data, specfile):
+def __maketbl(data, specfile, sourcefiles=[]):
     star = specfile.split('_')[4]
-    sourcefiles = [specfile]
-    return utils.list2spectbl(data, star, sourcefiles)
+    return utils.list2spectbl(data, star, specfile, sourcefiles)
     
 def __inst_i(filename):
     name = path.basename(filename)
