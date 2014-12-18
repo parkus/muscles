@@ -57,16 +57,7 @@ def specstep(spectbl, *args, **kwargs):
             e = lace(e, e)
             plts.append(plt.plot(w, e, *args, **kwargs))
     
-    return plts
+    plt.xlabel('Wavelength [$\AA$]')
+    plt.ylabel('Flux [erg/s/cm$^2$/$\AA$]')
     
-def cyclespec(files):
-    plt.ioff()
-    for f in files:
-        specs = io.read(f)
-        for spec in specs:
-            specstep(spec)
-        plt.title(path.basename(f))
-        plt.xlabel('Wavelength [$\AA$]')
-        plt.ylabel('Flux [erg/s/cm$^2$/$\AA$]')
-        plt.show()
-    plt.ion()
+    return plts

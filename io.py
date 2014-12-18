@@ -8,10 +8,12 @@ Created on Mon Nov 10 14:28:07 2014
 from os import path
 from astropy.io import fits
 import numpy as np
-from my_numpy import mids2edges
+from my_numpy import mids2edges, sliminterpN
 from scipy.io import readsav as spreadsav
-from database import instruments
+import database as db
 import utils
+
+phoenixbase = 'ftp://phoenix.astro.physik.uni-goettingen.de/HiResFITS/PHOENIX-ACES-AGSS-COND-2011/'
 
 def read(specfile):
     """A catch-all function to read in FITS spectra from all variety of 
@@ -37,32 +39,33 @@ def readfits(specfile):
     """Read a fits file into standardized table."""
     
     insti = __inst_i(specfile)
-    inststr = instruments[insti]
+    inststr = db.instruments[insti]
     observatory = inststr.split('_')[0].upper()
     
+    spec = fits.open(specfile)
+    sourcefiles = []
     if observatory == 'HST':
-        spec = fits.open(specfile)
         sd, sh = spec[1].data, spec[1].header
-        if 'custom' in specfile: #TODO: update once I have x2d extraction
-            exptime = sd['exptime'][0]
+        flux, err = sd['flux'], sd['error']
+        shape = flux.shape
+        iarr = np.ones(shape)*insti
+        if 'custom' in specfile or 'coadd' in specfile:
+            #TODO: update once I have x2d extraction
+            exptarr = sd['exptime']
             w0, w1 = sd['w0'], sd['w1']
             flags = np.array([np.nan]*len(w0))
+            if 'coadd' in specfile:
+                sourcefiles = spec['sourcefiles'].data['sourcefiles']
+            datas = [[w0,w1,flux,err,exptarr,flags,iarr]]
         else: 
             exptime = sh['exptime']
             wmid, flags = sd['wavelength'], sd['dq']
             wedges = np.array([mids2edges(wm, 'left', 'linear-x') for wm in wmid])
             w0, w1 = wedges[:,:-1], wedges[:,1:]
-        flux, err = sd['flux'], sd['error']
-        shape = flux.shape
-        iarr = np.ones(shape)*insti
-        exptarr = np.ones(shape)*exptime
-        if 'custom' in specfile:
-            datas = [[w0,w1,flux,err,exptarr,flags,iarr]]
-        else:
+            exptarr = np.ones(shape)*exptime
             datas = np.array([w0,w1,flux,err,exptarr,flags,iarr])
             datas = datas.swapaxes(0,1)
     elif observatory == 'XMM':
-        spec = fits.open(specfile)
         colnames = ['Wavelength', 'BinWidth', 'Flux', 'FluxError', 'Flux2']
         wmid, dw, cps, cpserr, flux = [spec[2].data[s][::-1] for s in colnames]
         #TODO: make sure to look this over regularly, as these files are likely
@@ -84,7 +87,8 @@ def readfits(specfile):
     else:
         raise Exception('fits2tbl cannot parse data from the {} observatory.'.format(observatory))
     
-    spectbls = [__maketbl(d, specfile) for d in datas]
+    spec.close()
+    spectbls = [__maketbl(d, specfile, sourcefiles) for d in datas]
     return spectbls
     
 def readtxt(specfile):
@@ -120,7 +124,7 @@ def readsav(specfile):
     sav = spreadsav(specfile)
     wmid = sav['w140']
     flux = sav['lya_mod']
-    velocity_range = 200 #km/s
+    velocity_range = 300 #km/s
     wrange = velocity_range/3e5*1215.67*np.array([-1,1]) + 1215.67
     keep = np.digitize(wmid, wrange) == 1
     wmid, flux = wmid[keep], flux[keep]
@@ -134,7 +138,9 @@ def readsav(specfile):
     
 def writefits(spectbl, name, overwrite=False):
     #use the native astropy function to write to fits
-    spectbl.write(name, overwrite=overwrite, fromat='fits')
+    sourcefiles = spectbl.meta['sourcefiles']
+    del spectbl.meta['sourcefiles'] #otherwise this makes a giant nasty header
+    spectbl.write(name, overwrite=overwrite, format='fits')
     
     #but open it up to do some modification
     with fits.open(name, mode='update') as ftbl:
@@ -155,22 +161,70 @@ def writefits(spectbl, name, overwrite=False):
         -------
         None
         """
+        #add name to first table
+        ftbl[1].name = 'spectrum'
+        
         #add column descriptions
         for i,name in enumerate(spectbl.colnames):
-            key = 'TDESC' + str(i)
+            key = 'TDESC' + str(i+1)
             ftbl[1].header[key] = spectbl[name].description
             
         #add an extra bintable for the instrument identifiers
-        col = [fits.Column('instruments','13A',array=instruments)]
+        col = [fits.Column('instruments','13A',array=db.instruments)]
         hdr = fits.Header()
-        hdr['comment'] = ('The instruments listed in this table correspond to the '
-                          'identifiers in the instrument column of the spectrum '
-                          'table. The number listed in that column is the index '
-                          'of the row in this table.')
-        idhdu = fits.BinTableHDU.from_columns(col, header=hdr)
+        hdr['comment'] = ('This extension is a legend for the integer '
+                          'identifiers in the instrument '
+                          'column of the previous extension.')
+        idhdu = fits.BinTableHDU.from_columns(col, header=hdr, name='legend')
         ftbl.append(idhdu)
-        ftbl.flush()   
+        
+        #add another bintable for the sourcefiles, if needed
+        if len(sourcefiles):
+            maxlen = max([len(sf) for sf in sourcefiles])
+            dtype = '{:d}A'.format(maxlen)
+            col = [fits.Column('sourcefiles', dtype, array=sourcefiles)]
+            hdr = fits.Header()
+            hdr['comment'] = ('This extension contains a list of the source '
+                              'files that were incorporated into this '
+                              'spectrum.')
+            sfhdu = fits.BinTableHDU.from_columns(col, header=hdr, 
+                                                  name='sourcefiles')
+            ftbl.append(sfhdu)
+        
+        ftbl.flush()
+        
+def phxpath(Teff, logg=4.5, FeH=0.0, aM=0.0, repo='ftp'):
+    """
+    Constructs the URL for the phoenix spectrum file for a star with effective
+    temperature Teff, log surface gravity logg, metalicity FeH, and alpha
+    elemnt abundance aM.
     
+    Does not check that the URL is actually valid, and digits beyond the
+    precision of the numbers used in the path will be truncated.
+    """
+    zstr = '{:+4.1f}'.format(FeH)
+    if FeH == 0.0: zstr = '-' + zstr[1:]
+    astr = '.Alpha={:+5.2f}'.format(aM) if aM != 0.0 else ''
+    name = ('lte{T:05.0f}-{g:4.2f}{z}{a}.PHOENIX-ACES-AGSS-COND-2011-HiRes.fits'
+            ''.format(T=Teff, g=logg, z=zstr, a=astr))
+    
+    if repo == 'ftp':
+        folder = 'Z' + zstr + astr + '/'
+        return phoenixbase + folder + name
+    else:
+        return path.join(repo, name)
+    
+def phxdata(Teff, logg=4.5, FeH=0.0, aM=0.0, repo='ftp'):
+    """
+    Get a phoenix spectral data from the repo and return as an array.
+    """
+    if repo == 'ftp':
+        url = phxpath(Teff, logg, FeH, aM)
+        fspec = fits.open(url)
+        return fspec[0].data
+    else:
+        raise NotImplementedError()
+
 def __maketbl(data, specfile, sourcefiles=[]):
     star = specfile.split('_')[4]
     return utils.list2spectbl(data, star, specfile, sourcefiles)
@@ -179,5 +233,5 @@ def __inst_i(filename):
     name = path.basename(filename)
     inst = name.split('_')[1:4]
     inst_str = '_'.join(inst)
-    return instruments.index(inst_str)
+    return db.instruments.index(inst_str)
     

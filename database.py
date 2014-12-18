@@ -6,14 +6,48 @@ Created on Fri Nov 07 15:51:54 2014
 """
 import os
 from astropy.io import fits
-from numpy import array, nonzero, unique
+from my_numpy import midpts
+from numpy import array, nonzero, unique, argsort, arange, hstack, logical_and
 import io
-from muscles import utils
+from itertools import product as iterproduct
+from urllib import urlretrieve
+from math import ceil
+
+datapath = r'C:\Users\Parke\Documents\Grad School\MUSCLES\Data'
 
 instruments = ['hst_cos_g130m','hst_cos_g160m','hst_cos_g230l','hst_sts_e140m',
                'hst_sts_e230m','hst_sts_e230h','hst_sts_g140m','hst_sts_g230l',
-               'hst_sts_g430l','xmm_mos_-----','mod_lya_kevin','mod_euv_-----']
+               'hst_sts_g430l','xmm_mos_-----','mod_lya_kevin','mod_euv_-----',
+               'mod_phx_-----']
 foldersbyband = {'u':'uv', 'v':'visible', 'x':'x-ray'}
+
+phxTgrid = hstack([arange(2300,7000,100),
+                   arange(7000,12001,200)])
+phxggrid = arange(0.0, 6.1, 0.5)
+phxZgrid = hstack([arange(-4.0, -2.0, 1.0),
+                   arange(-2.0, 1.1, 0.5)])
+phxagrid = arange(-0.2, 1.3, 0.2)
+phxgrids = [phxTgrid, phxggrid, phxZgrid, phxagrid]
+phxwave = fits.getdata(os.path.join(datapath, 'phoenix/wavegrid_hires.fits'))
+phxwave = hstack([[499.95], midpts(phxwave), [54999.875]])
+
+def findfiles(path, substrings):
+    """Look for a file in directory at path that contains ALL of the strings
+    in substrings in its filename."""
+    def good(name):
+        hasstring = [(s in name) for s in substrings]
+        return all(hasstring)
+    return filter(good, os.listdir(path))
+
+def findsimilar(specfile, newstring):
+    """Find a file with the same identifier as sepcfile, but that also contains
+    newstring int he file name. For example, find the the coadd version of the
+    u_hst_cos_g130m_gj832 observation."""
+    base = parse_id(specfile)
+    dirname = os.path.dirname(specfile)
+    names = findfiles(dirname, [base, newstring])
+    paths = [os.path.join(dirname, n) for n in names]
+    return paths
 
 def allspecfiles(target, folder='.'):
     """Find all the spectra for the target within the subdirectories of path
@@ -35,11 +69,43 @@ def allspecfiles(target, folder='.'):
     
     return files
 
-def parse_instrument(filename):
-    """Parse out the instrument portion of a spectrum filename."""
+def parse_info(filename, start, stop):
+    """Parse out the standard information bits from a muscles filename."""
     name = os.path.basename(filename)
     pieces = name.split('_')
-    return '_'.join(pieces[1:4])
+    return '_'.join(pieces[start:stop])
+
+def parse_instrument(filename):
+    return parse_info(filename, 1, 4)
+def parse_band(filename):
+    return parse_info(filename, 0, 1)
+def parse_star(filename):
+    return parse_info(filename, 4, 5)
+def parse_id(filename):
+    return parse_info(filename, 0, 5)
+
+def group_by_instrument(lst):
+    """Group the spectbls by instrument, returning a list of the groups. Useful
+    for coaddition. Preserves order. lst can be a list of filenames or a list
+    of spectbls."""
+    
+    #get the unique instruments
+    if type(lst[0]) is str:
+        specfiles = lst
+    else:
+        specfiles = [spec.meta['filename'] for spec in lst]
+    allinsts = array(map(parse_instrument, specfiles))
+    insts, ind = unique(allinsts, return_index=True)
+    insts = insts[argsort(ind)]
+    
+    #group em
+    groups = []
+    for inst in insts:
+        use = nonzero(allinsts == inst)[0]
+        specgroup = [lst[i] for i in use]
+        groups.append(specgroup)
+    
+    return groups
 
 def coaddpath(specpath):
     """Construct standardized name for coadd FITS file within same directory as 
@@ -50,57 +116,93 @@ def coaddpath(specpath):
     coaddname = '_'.join(parts[:5]) + '_coadd.fits'
     return os.path.join(specdir, coaddname)
     
-def coadd_swap(specfile, datafolder='.'):
-    """Search for coadds that cover groups of the specfiles and replace those
-    groups with the coadds.
+def sub_coaddfiles(specfiles):
+    """Replace any group of specfiles from the same instrument with a coadd
+    file that includes data from all spectra in that group if one exists in the
+    same directory.
     """
-    groups = utils.group_by_instrument(spectbls)
+    groups = group_by_instrument(specfiles)
+    result = []
     for group in groups:
-        coaddfile = find_coadd(group, datafolder)
-        if len(coaddfile):
-            group = [coaddfile]
-    return 
-
-def find_coadd(spectbls, datafolder='.', returntbl=False):
-    #FIXME: not sure if I actually need this as it uses time to open tables
-    #I should probably just do this at the file level
-    """
-    Look for a FITS file that is the coaddition of the provided spectlbs.
-    Returns the coadd spectbl if it exists and it contains data from all of the
-    provided spectbls otherwise returns none. 
-    """
-    #parse sourcefiles
-    sourcefiles = []
-    for spec in spectbls: sourcefiles.extend(spec.meta['sourcefiles'])
+        coaddfile = find_coaddfile(group)
+        if coaddfile is not None:
+            result.append(coaddfile)
+        else:
+            result.extend(group)
+    return result
     
+def sub_customfiles(specfiles):
+    """Replace any file with a custom extraction file for the same instrument
+    if one exists in the same directory."""
+    result = []
+    for name in specfiles:
+        customfiles = findsimilar(name, 'custom')
+        if len(customfiles) > 1:
+            raise ValueError('Multiple matching files.')
+        elif len(customfiles) == 1:
+            result.append(customfiles[0])
+        else:
+            result.append(name)
+    return result
+
+def find_coaddfile(specfiles):
+    """
+    Look for a file that is the coaddition of the provided spectlbs.
+    Returns the filename if it exists and it contains data from all of the
+    provided spectbls, otherwise returns none. 
+    """
     #check for multiple configurations
-    instruments = array(map(parse_instrument, sourcefiles))
-    if any(instruments[:-1] != instruments[:-1]):
+    insts = array(map(parse_instrument, specfiles))
+    if any(insts[:-1] != insts[:-1]):
         return NotImplemented("...can't deal with different data sources.")
     
-    #get the filename for one of the source files
-    specname = spectbls[0].meta['sourcefiles'][0]
-    
-    #construct standard 
-    band = specname[0] #should be 'u', 'v', or 'x'
-    subfolder = foldersbyband[band]
-    coaddname = coaddpath(specname)
-    coaddfile = os.path.join(datafolder, subfolder, coaddname)
-    
-    try:
-        coadd = io.read(coaddfile)
+    coaddfile = coaddpath(specfiles[0])
+    if os.path.isfile(coaddfile):
+        coadd, = io.read(coaddfile)
         
         #check that the coadd contains the same data as the spectbls
         #return none if any is missing
         csourcefiles = coadd.meta['sourcefiles']
-        for sf in sourcefiles:
+        for sf in specfiles:
             if sf not in csourcefiles:
                 return None
-        return coadd if returntbl else return coaddfile
+        return coaddfile
         
     #if the file doesn't exist, return None
-    except IOError:
+    else:
         return None
+
+def fetchphxfiles(Trng=[2500,3500], grng=[4.0,5.5], FeHrng=[0.0, 0.0], 
+                  aMrng=[0.0, 0.0], repo=datapath+'\phoenix'):
+    """
+    Download all Phoenix spectra covering the provided ranges. Does not
+    re-download files that already exist in the directory.
+    
+    Default values are from UV variability sample properties.
+    """
+    def inclusive(grid, rng):
+        use = logical_and(grid >= rng[0], grid <= rng[1])
+        return grid[use]
+    grids = map(inclusive, phxgrids, [Trng, grng, FeHrng, aMrng])
+    
+    combos = iterproduct(*grids)
+    paths = []
+    for combo in combos:
+        locpath = io.phxpath(*combo, repo=repo)
+        if not os.path.exists(locpath):
+            paths.append((locpath, io.phxpath(*combo, repo='ftp')))
+    
+    N = len(paths)
+    datasize = N*6.0/1024.0
+    print ('Beginning download of {} files, {:.3f} Gb. Ctrl-C to stop.'
+           ''.format(N,datasize))
+    print 'Progress bar (- = 5%):\n'
+    
+    Nbar = ceil(N/20.0)
+    for i,(loc, ftp) in enumerate(paths):
+        if i % Nbar == 0:
+            print '-',
+        urlretrieve(ftp,loc)
 
 def auto_rename(folder):
     """
