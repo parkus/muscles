@@ -14,6 +14,7 @@ from urllib import urlretrieve
 from math import ceil
 
 datapath = r'C:\Users\Parke\Documents\Grad School\MUSCLES\Data'
+phxpath = os.path.join(datapath, 'phoenix')
 
 instruments = ['hst_cos_g130m','hst_cos_g160m','hst_cos_g230l','hst_sts_e140m',
                'hst_sts_e230m','hst_sts_e230h','hst_sts_g140m','hst_sts_g230l',
@@ -28,7 +29,7 @@ phxZgrid = hstack([arange(-4.0, -2.0, 1.0),
                    arange(-2.0, 1.1, 0.5)])
 phxagrid = arange(-0.2, 1.3, 0.2)
 phxgrids = [phxTgrid, phxggrid, phxZgrid, phxagrid]
-phxwave = fits.getdata(os.path.join(datapath, 'phoenix/wavegrid_hires.fits'))
+phxwave = fits.getdata(os.path.join(phxpath, 'wavegrid_hires.fits'))
 phxwave = hstack([[499.95], midpts(phxwave), [54999.875]])
 
 def findfiles(path, substrings):
@@ -173,7 +174,7 @@ def find_coaddfile(specfiles):
         return None
 
 def fetchphxfiles(Trng=[2500,3500], grng=[4.0,5.5], FeHrng=[0.0, 0.0], 
-                  aMrng=[0.0, 0.0], repo=datapath+'\phoenix'):
+                  aMrng=[0.0, 0.0], repo=phxpath):
     """
     Download all Phoenix spectra covering the provided ranges. Does not
     re-download files that already exist in the directory.

@@ -12,6 +12,7 @@ from my_numpy import mids2edges, sliminterpN
 from scipy.io import readsav as spreadsav
 import database as db
 import utils
+from astropy.table.Table import read as tblread
 
 phoenixbase = 'ftp://phoenix.astro.physik.uni-goettingen.de/HiResFITS/PHOENIX-ACES-AGSS-COND-2011/'
 
@@ -35,37 +36,40 @@ def read(specfile):
     fmt = specfile[-i:]
     return readfunc[fmt](specfile)
 
+def readstdfits(specfile):
+    """Read a fits file that was created by writefits."""
+    spectbl = tblread(specfile)
+    try:
+        sourcefiles = fits.getdata(specfile, 'sourcefiles')['sourcefiles']
+        spectbl.meta['sourcefiles'] = sourcefiles
+    except KeyError:
+        pass #if the extension doesn't exist, don't worry about it
+    return spectbl
+    
 def readfits(specfile):
     """Read a fits file into standardized table."""
     
     insti = __inst_i(specfile)
     inststr = db.instruments[insti]
-    observatory = inststr.split('_')[0].upper()
+    observatory = inststr.split('_')[0].lower()
     
     spec = fits.open(specfile)
     sourcefiles = []
-    if observatory == 'HST':
+    if any([s in specfile for s in ['coadd', 'custom', 'mod']]):
+        readstdfits(specfile)
+    elif observatory == 'hst':
         sd, sh = spec[1].data, spec[1].header
         flux, err = sd['flux'], sd['error']
         shape = flux.shape
         iarr = np.ones(shape)*insti
-        if 'custom' in specfile or 'coadd' in specfile:
-            #TODO: update once I have x2d extraction
-            exptarr = sd['exptime']
-            w0, w1 = sd['w0'], sd['w1']
-            flags = np.array([np.nan]*len(w0))
-            if 'coadd' in specfile:
-                sourcefiles = spec['sourcefiles'].data['sourcefiles']
-            datas = [[w0,w1,flux,err,exptarr,flags,iarr]]
-        else: 
-            exptime = sh['exptime']
-            wmid, flags = sd['wavelength'], sd['dq']
-            wedges = np.array([mids2edges(wm, 'left', 'linear-x') for wm in wmid])
-            w0, w1 = wedges[:,:-1], wedges[:,1:]
-            exptarr = np.ones(shape)*exptime
-            datas = np.array([w0,w1,flux,err,exptarr,flags,iarr])
-            datas = datas.swapaxes(0,1)
-    elif observatory == 'XMM':
+        exptime = sh['exptime']
+        wmid, flags = sd['wavelength'], sd['dq']
+        wedges = np.array([mids2edges(wm, 'left', 'linear-x') for wm in wmid])
+        w0, w1 = wedges[:,:-1], wedges[:,1:]
+        exptarr = np.ones(shape)*exptime
+        datas = np.array([w0,w1,flux,err,exptarr,flags,iarr])
+        datas = datas.swapaxes(0,1)
+    elif observatory == 'xmm':
         colnames = ['Wavelength', 'BinWidth', 'Flux', 'FluxError', 'Flux2']
         wmid, dw, cps, cpserr, flux = [spec[2].data[s][::-1] for s in colnames]
         #TODO: make sure to look this over regularly, as these files are likely
