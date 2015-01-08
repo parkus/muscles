@@ -4,11 +4,9 @@ Created on Wed Nov 19 12:11:41 2014
 
 @author: Parke
 """
-from numpy import isclose, array, split, nonzero, logical_not
-from my_numpy import lace
+from numpy import array
 import matplotlib.pyplot as plt
-import io
-from os import path
+from mypy.specutils import plot as specplot
 
 def specstep(spectbl, *args, **kwargs):
     """
@@ -25,10 +23,10 @@ def specstep(spectbl, *args, **kwargs):
         
     Returns
     -------
-    plt : object
+    plts : list
         The plot object(s) -- one for each contiguous region of the spectrum.
-    vlns : object, optional
-        The corresponding vlines object(s) if err == True.
+    errplts : list, optional
+        Same as above, but for errors, if plotted. 
     """
     if 'err' in kwargs:
         err = kwargs['err']
@@ -36,28 +34,20 @@ def specstep(spectbl, *args, **kwargs):
     else:
         err = False
     
-    #make into an array for more concise manipulation
-    s = array([spectbl[s] for s in ['w0','w1','flux','error']])
+    #parse data from table
+    w0, w1, f, e = array([spectbl[s] for s in ['w0','w1','flux','error']])
+    wbins = array([w0, w1]).T
     
-    #split the spectrum at any gaps
-    isgap = logical_not(isclose(s[0,1:], s[1,:-1]))
-    gaps = nonzero(isgap)[0] + 1
-    slist = split(s, gaps, 1)
-    
-    plts,vlns = [],[]
-    for s in slist:
-        w0,w1,f,e = s
-        
-        #make vectors that will plot as a stairstep
-        w = lace(w0, w1)
-        f = lace(f, f)
-        plts.append(plt.plot(w, f, *args, **kwargs))
-        
-        if err:
-            e = lace(e, e)
-            plts.append(plt.plot(w, e, *args, **kwargs))
-    
+    #plot flux
+    if 'color' not in kwargs: kwargs['color'] = 'k'
+    plts = specplot(wbins, f, *args, **kwargs)
     plt.xlabel('Wavelength [$\AA$]')
     plt.ylabel('Flux [erg/s/cm$^2$/$\AA$]')
     
-    return plts
+    #plot error
+    if err:
+        if 'color' not in kwargs: kwargs['color'] = 'r'
+        errplts = specplot(wbins, e, *args, **kwargs)
+        return plts, errplts
+    else:
+        return plts
