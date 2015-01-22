@@ -5,12 +5,14 @@ Created on Tue Nov 18 18:02:03 2014
 @author: Parke
 """
 
-import my_numpy as mnp
+import settings
+import mypy.my_numpy as mnp
 import numpy as np
 from astropy.table import Table, Column
-from astropy.table import vstack as tblstack
 
-colnames = ['w0','w1','flux','error','exptime','flags','instrument']
+keys = ['units', 'dtypes', 'fmts', 'descriptions', 'colnames']
+spectbl_format = [settings.spectbl_format[key] for key in keys]
+units, dtypes, fmts, descriptions, colnames = spectbl_format
 
 def clooge_edges(mids):
     """Just uses the midpoints of the midpoints to guess at the edges for
@@ -20,6 +22,19 @@ def clooge_edges(mids):
     beg = mids[0] - (edges[0] - mids[0])
     end = mids[-1] + (mids[-1] - edges[-1])
     return np.concatenate([[beg], edges, [end]])
+    
+def conform_spectbl(spectbl):
+    """Make sure all columns have the appropriate data types, formats,
+    descriptions, and units."""
+    cols = []
+    meta = spectbl.meta
+    for u,dt,f,de,n in zip(*spectbl_format):
+        #ugh, there is some astropy bug in the dtype casting that corrupts
+        #the numbers int he column if, e.g., '>f8' is cast to 'f8'. this is
+        #a workaround
+        dt = np.result_type(dt, spectbl[n].dtype)
+        cols.append(Column(spectbl[n], n, dt, unit=u, description=de, format=f))
+    return Table(cols, meta=meta)
     
 def vecs2spectbl(w0, w1, flux, err, exptime, flags, instrument, star, 
                  filename, sourcefiles=[]):
@@ -59,34 +74,23 @@ def list2spectbl(datalist, star, filename, sourcefiles=[]):
     -------
     spectbl : MUSCLES spectrum (astropy) table
     """
-    units = ['Angstrom']*2 + ['erg/s/cm2/Angstrom']*2 + ['s','','']
-    dtypes = ['f8']*5 + ['i', 'i1']
-    fmts = ['.2f']*2 + ['.2e']*2 + ['.1f', 'b', 'd']
-    descriptions = ['left (short,blue) edge of the wavelength bin',
-                    'right (long,red) edge of the wavelength bin',
-                    'average flux over the bin',
-                    'error on the flux',
-                    'cumulative exposure time for the bin',
-                    'data quality flags (specific to the instrument)',
-                    'identifier for the instrument that is the source of the '
-                    'data. use muscles.instruments[identifier] to determine '
-                    'the instrument.']
+    
     cols = [Column(d,n,dt,description=dn,unit=u,format=f) for d,n,dt,dn,u,f in
             zip(datalist,colnames,dtypes,descriptions,units,fmts)]
-    meta = {'filename' : filename,
-            'sourcefiles' : sourcefiles,
-            'star' : star}
+    meta = {'FILENAME' : filename,
+            'SOURCEFILES' : sourcefiles,
+            'STAR' : star}
     return Table(cols, meta=meta)
     
 def vstack(spectbls):
-    stars = [s.meta['star'] for s in spectbls]
+    stars = [s.meta['STAR'] for s in spectbls]
     if len(set(stars)) > 1:
         raise ValueError("Don't try to stack tables from different stars.")
     else:
         star = stars[0]
         
     sourcefiles = []
-    for s in spectbls: sourcefiles.extend(s.meta['sourcefiles'])
+    for s in spectbls: sourcefiles.extend(s.meta['SOURCEFILES'])
     sourcefiles = list(set(sourcefiles))
     
     data = []

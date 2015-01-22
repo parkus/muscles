@@ -6,14 +6,16 @@ Created on Mon Oct 20 15:42:13 2014
 """
 
 import numpy as np
-from astropy.table import Table
-import my_numpy as mnp
+from astropy.table import Table, Column
+from astropy.io import fits
+import mypy.my_numpy as mnp
 from math import sqrt, floor, log10
-import specutils
+from mypy import specutils
 import database as db
-import utils, io
+import utils, io, settings
+from spectralPhoton.hst.convenience import x2dspec
 
-def panspectrum(spectbls, R=1000.0, savecoadds=True):
+def panspectrum(star, R=1000.0, savecoadds=True, savespecs=True):
     """
     Coadd and splice the provided spectra into one panchromatic spectrum
     sampled at the native resolutions and constant R.
@@ -21,8 +23,11 @@ def panspectrum(spectbls, R=1000.0, savecoadds=True):
     Overlapping spectra will be normalized with the assumptions that they are 
     listed in order of descending quality. 
     """
+    files = db.panfiles(star)
+    spectbls = sum(map(io.read, files), [])
+    
     #make sure all spectra are of the same star
-    __same_star(spectbls)
+    star = __same_star(spectbls)
     
     #make sure spectra are each from a single source
     for i,s in enumerate(spectbls):
@@ -33,44 +38,52 @@ def panspectrum(spectbls, R=1000.0, savecoadds=True):
     
     #coadd all spectra from the same configuration
     groups = db.group_by_instrument(spectbls)
-    coadds = []
+    specs = []
     for group in groups:
-        filenames = [s.meta['filename'] for s in group]
-        if len(group) == 1:
-            coadds.extend(group)
-        #FIXME: this is to avoid gaps, but i don't think it should be coded like this
+        filenames = [s.meta['FILENAME'] for s in group]
         if len(set(filenames)) == 1:
-            coadds.extend(group)
+            specs.extend(group)
         else:
-            cspec = coadd(group, savefits=savecoadds)
-            coadds.append(cspec)
+            cspec = coadd(group, savefits=savespecs)
+            specs.append(cspec)
     
     #parse the modeled from the observed spectra
-    ismodel = lambda spec: 'mod' in spec.meta['filename']
-    modelspecs = filter(ismodel, coadds)
-    obsspecs = filter(lambda spec: not ismodel(spec), coadds)
+#    ismodel = lambda spec: 'mod' in spec.meta['FILENAME']
+#    modelspecs = filter(ismodel, specs)
+#    obsspecs = filter(lambda spec: not ismodel(spec), specs)
+    
+    #clip out any lya to leave that space for the reconstruction
+    specs = [cullrange(s, settings.lyacut) for s in specs]
     
     #normalize the measured spectra according to their input order if they
     #overlap
     #FIXME: make sure this is working right
-    N = len(obsspecs)
+    N = len(specs)
     for i in range(N):
+        if settings.dontnormalize(specs[i]): continue
         for j in np.arange(i+1,N):
-            if __overlapping(obsspecs[i], obsspecs[j]):
-                obsspecs[j] = normalize(obsspecs[i], obsspecs[j])
+            if settings.dontnormalize(specs[j]): continue
+            if __overlapping(specs[i], specs[j]):
+                specs[j] = normalize(specs[i], specs[j])
     
     #splice together all the measured spectra based on S/N
     #FIXME: for now, sort by wavelength because splicing over gaps doesn't work
     #should probably generalize the splicing later, however
-    obsspecs.sort(key = lambda s: s['w1'][-1])
-    catspec = reduce(smartsplice, obsspecs)
+    specs.sort(key = lambda s: s['w1'][-1])
+    catspec = reduce(smartsplice, specs)
     
     #splice the full extent of the models in
-    catspec = reduce(splice, modelspecs, catspec)
+#    catspec = reduce(splice, modelspecs, catspec)
     
     #resample at constant R
     Rspec = powerbin(catspec, R)
     
+    if savespecs:
+        #%% save to fits
+        paths = [db.panpath(star), db.Rpanpath(star)]
+        for spec, path in zip([catspec, Rspec], paths):
+            io.writefits(spec, path, overwrite=True)
+            
     return catspec,Rspec
 
 def normalize(spectbla, spectblb, SNcut=2.0, method='area'):
@@ -151,7 +164,6 @@ def smartsplice(spectbla, spectblb):
         basespec = both[base][i0+1:i1-1]
         w0base, w1base = basespec['w0'], basespec['w1']
         basegrid = np.append(w0base, w1base[-1])
-        N = len(basegrid) - 1
         ospecs = [0,0]
         ospecs[base] = basespec
         ospecs[not base] = rebin(both[not base], basegrid) #rebin the finer spectrum
@@ -243,6 +255,11 @@ def splice(spectbla, spectblb):
     
     return utils.vstack(speclist)
 
+def cullrange(spectbl, wrange):
+    in0, in1 = [mnp.inranges(spectbl[s], wrange) for s in ['w0', 'w1']]
+    cull = in0 & in1
+    return spectbl[~cull]
+
 def powerbin(spectbl, R=1000.0, lowlim=1.0):
     """
     Rebin a spectrum onto a grid with constant resolving power.
@@ -253,7 +270,6 @@ def powerbin(spectbl, R=1000.0, lowlim=1.0):
     start = spectbl['w0'][0]
     if start < lowlim: start = lowlim
     end = spectbl['w1'][-1]
-    dwmin = start/R
     maxpow = floor(log10(end/start)/log10((2.0*R + 1.0)/(2.0*R - 1.0)))
     powers = np.arange(maxpow)
     w = start**powers
@@ -264,33 +280,32 @@ def coadd(spectbls, maskbaddata=True, savefits=False):
     inst = __same_instrument(spectbls)
     star = __same_star(spectbls)
     
-    sourcefiles = [s.meta['filename'] for s in spectbls]
+    sourcefiles = [s.meta['FILENAME'] for s in spectbls]
     
     listify = lambda s: [spec[s].data for spec in spectbls]
     cols = ['w0','w1','flux','error','exptime','flags']
     w0, w1, f, e, expt, dq = map(listify, cols)
     we = [np.append(ww0,ww1[-1]) for ww0,ww1 in zip(w0,w1)]
     if maskbaddata:
-        masks = [ddq > 0 for ddq in dq]
-        cwe, cf, ce, cexpt = specutils.coadd(we, f, e, expt, masks)
-        cw0, cw1 = cwe[:-1], cwe[1:]
-        goodbins = (cexpt > 0)
-        cw0,cw1,cf,ce,cexpt = [v[goodbins] for v in [cw0, cw1, cf, ce, cexpt]]
-        dq = 0
+        dqmask = settings.dqmask[inst]
+        masks = [(ddq & dqmask) > 0 for ddq in dq]
+        cwe, cf, ce, cexpt, dq = specutils.coadd(we, f, e, expt, dq, masks)
     else:
-        cwe, cf, ce, cexpt = specutils.coadd(we, f, e, expt)
-        cw0, cw1 = cwe[:-1], cwe[1:]
-        dq = np.nan
-        
+        cwe, cf, ce, cexpt, dq = specutils.coadd(we, f, e, expt, dq)
+    
+    cw0, cw1 = cwe[:-1], cwe[1:]
+    goodbins = (cexpt > 0)
+    cw0,cw1,cf,ce,cexpt = [v[goodbins] for v in [cw0, cw1, cf, ce, cexpt]] 
+       
     spectbl = utils.vecs2spectbl(cw0,cw1,cf,ce,cexpt,dq,inst,star,None,
                                  sourcefiles)
     if savefits:
         cfile = db.coaddpath(sourcefiles[0])
         io.writefits(spectbl, cfile, overwrite=True)
-        spectbl.meta['filename'] = cfile
+        spectbl.meta['FILENAME'] = cfile
     return spectbl
     
-def phxspec(Teff, logg=4.5, FeH=0.0, aM=0.0, repo='.'):
+def phxspec(Teff, logg=4.5, FeH=0.0, aM=0.0, repo=db.phxpath):
     """
     Quad-linearly interpolates the available phoenix spectra to the provided
     values for temperature, surface gravity, metallicity, and alpha metal
@@ -302,7 +317,7 @@ def phxspec(Teff, logg=4.5, FeH=0.0, aM=0.0, repo='.'):
     #make a function to retrieve spectrum given grid indices
     def getspec(*indices): 
         args = [grid[i] for grid,i in zip(grids, indices)]
-        return io.readphx(*args, repo=repo)
+        return io.phxdata(*args, repo=repo)
     
     #interpolate
     spec = mnp.sliminterpN(pt, grids, getspec)
@@ -316,14 +331,48 @@ def phxspec(Teff, logg=4.5, FeH=0.0, aM=0.0, repo='.'):
     data = [db.phxwave[:-1], db.phxwave[1:], spec, err, expt, flags, source]
     return utils.list2spectbl(data, '', '')
 
+def atuo_phxspec(star):
+    Teff, kwds = db.phxinput(star)
+    spec = phxspec(Teff, **kwds)
+    path = db.phxspecpath(star)
+    io.writefits(spec, path, overwrite=True)
+    return spec
+
+def auto_customspec(star, specfiles=None):
+    if specfiles is None:
+        specfiles = db.allspecfiles(star)
+    ss = settings.load(star) 
+    for custom in ss.custom_extractions:
+        config = custom['config']
+        if 'hst' in config:
+            x1dfile = filter(lambda f: config in f, specfiles)[0]
+            x2dfile = x1dfile.replace('x1d','x2d')
+            specfile = x1dfile.replace('x1d', 'custom_spec')
+            spectbl = x2dspec(x2dfile, x1dfile=x1dfile, **custom['kwds'])
+            
+            #conform to spectbl standard
+            spectbl.rename_column('dq', 'flags')
+            spectbl.meta['STAR'] = star
+            spectbl.meta['SOURCEFILES'] = [x2dfile]
+            inst = db.getinsti(specfile)
+            n = len(spectbl)
+            instcol = Column([inst]*n, 'instrument', 'i1')
+            expt = fits.getval(x2dfile, 'exptime', extname='sci')
+            exptcol = Column([expt]*n, 'exptime')
+            spectbl.add_columns([instcol, exptcol])
+            
+            io.writefits(spectbl, specfile, overwrite=True)
+        else:
+            raise NotImplementedError("No custom extractions defined for {}"
+            "".format(config))
+
 def rebin(spec, newedges):
     oldedges = np.append(spec['w0'], spec['w1'][-1])
-    flux, error = specutils.rebin(newedges, oldedges, spec['flux'], spec['error'])
-    star, fn, sf = [spec.meta[s] for s in ['star', 'filename', 'sourcefiles']]
+    flux, error, flags = specutils.rebin(newedges, oldedges, spec['flux'], 
+                                         spec['error'], spec['flags'])
+    star, fn, sf = [spec.meta[s] for s in ['STAR', 'FILENAME', 'SOURCEFILES']]
     w0, w1 = newedges[:-1], newedges[1:]
-    N = len(flux)
     inst = np.array([spec['instrument'][0]]*len(flux))
-    flags = np.array([np.nan]*N)
     dold, dnew = np.diff(oldedges), np.diff(newedges)
     expt = mnp.rebin(newedges, oldedges, spec['exptime']*dold)/dnew
     return utils.vecs2spectbl(w0, w1, flux, error, expt, flags, inst, star, fn, sf) 
@@ -353,7 +402,7 @@ def __same_instrument(spectbls):
     return instruments[0]
 
 def __same_star(spectbls):
-    stars = np.array([s.meta['star'] for s in spectbls])
+    stars = np.array([s.meta['STAR'] for s in spectbls])
     if any(stars[1:] != stars[:-1]):
         raise ValueError('More than one target in the provided spectra.')
     return stars[0]

@@ -8,11 +8,11 @@ Created on Mon Nov 10 14:28:07 2014
 from os import path
 from astropy.io import fits
 import numpy as np
-from my_numpy import mids2edges, sliminterpN
+from mypy.my_numpy import mids2edges
 from scipy.io import readsav as spreadsav
 import database as db
 import utils
-from astropy.table.Table import read as tblread
+from astropy.table import Table
 
 phoenixbase = 'ftp://phoenix.astro.physik.uni-goettingen.de/HiResFITS/PHOENIX-ACES-AGSS-COND-2011/'
 
@@ -38,25 +38,28 @@ def read(specfile):
 
 def readstdfits(specfile):
     """Read a fits file that was created by writefits."""
-    spectbl = tblread(specfile)
+    spectbl = Table.read(specfile, hdu=1)
+    spectbl.meta['FILENAME'] = specfile
     try:
         sourcefiles = fits.getdata(specfile, 'sourcefiles')['sourcefiles']
-        spectbl.meta['sourcefiles'] = sourcefiles
+        spectbl.meta['SOURCEFILES'] = sourcefiles
     except KeyError:
-        pass #if the extension doesn't exist, don't worry about it
+        spectbl.meta['SOURCEFILES'] = []
+    
+    spectbl = utils.conform_spectbl(spectbl)
+    
     return spectbl
     
 def readfits(specfile):
     """Read a fits file into standardized table."""
     
-    insti = __inst_i(specfile)
+    insti = db.getinsti(specfile)
     inststr = db.instruments[insti]
     observatory = inststr.split('_')[0].lower()
     
     spec = fits.open(specfile)
-    sourcefiles = []
     if any([s in specfile for s in ['coadd', 'custom', 'mod']]):
-        readstdfits(specfile)
+        return [readstdfits(specfile)]
     elif observatory == 'hst':
         sd, sh = spec[1].data, spec[1].header
         flux, err = sd['flux'], sd['error']
@@ -92,7 +95,7 @@ def readfits(specfile):
         raise Exception('fits2tbl cannot parse data from the {} observatory.'.format(observatory))
     
     spec.close()
-    spectbls = [__maketbl(d, specfile, sourcefiles) for d in datas]
+    spectbls = [__maketbl(d, specfile) for d in datas]
     return spectbls
     
 def readtxt(specfile):
@@ -116,8 +119,8 @@ def readtxt(specfile):
         N = len(flux)
         err = np.ones(N)*np.nan
         expt,flags = np.zeros(N), np.zeros(N,'i1')
-        source = __inst_i(specfile)*np.ones(N)
-        return __maketbl([w0,w1,flux,err,expt,flags,source], specfile),
+        source = db.getinsti(specfile)*np.ones(N)
+        return [__maketbl([w0,w1,flux,err,expt,flags,source], specfile)]
     else:
         raise Exception('A parser for {} files has not been implemented.'.format(specfile[2:9]))
         
@@ -128,43 +131,48 @@ def readsav(specfile):
     sav = spreadsav(specfile)
     wmid = sav['w140']
     flux = sav['lya_mod']
-    velocity_range = 300 #km/s
-    wrange = velocity_range/3e5*1215.67*np.array([-1,1]) + 1215.67
-    keep = np.digitize(wmid, wrange) == 1
-    wmid, flux = wmid[keep], flux[keep]
+#    velocity_range = 300 #km/s
+#    wrange = velocity_range/3e5*1215.67*np.array([-1,1]) + 1215.67
+#    keep = np.digitize(wmid, wrange) == 1
+#    wmid, flux = wmid[keep], flux[keep]
     we = mids2edges(wmid, 'left', 'linear-x')
     w0, w1 = we[:-1], we[1:]
     N = len(flux)
     err = np.ones(N)*np.nan
     expt,flags = np.zeros(N), np.zeros(N, 'i1')
-    source = __inst_i(specfile)*np.ones(N)
-    return __maketbl([w0,w1,flux,err,expt,flags,source], specfile),
+    source = db.getinsti(specfile)*np.ones(N)
+    return [__maketbl([w0,w1,flux,err,expt,flags,source], specfile)]
     
 def writefits(spectbl, name, overwrite=False):
+    """
+    Writes spectbls to a standardized MUSCLES FITS file format.
+    (Or, rather, this function defines the standard.)
+    
+    Parameters
+    ----------
+    spectbl : astropy table in MUSCLES format
+        The spectrum to be written to a MSUCLES FITS file. 
+    name : str
+        filename for the FITS output
+    overwrite : {True|False}
+        whether to overwrite if output file already exists
+        
+    Returns
+    -------
+    None
+    """
     #use the native astropy function to write to fits
-    sourcefiles = spectbl.meta['sourcefiles']
-    del spectbl.meta['sourcefiles'] #otherwise this makes a giant nasty header
+    try:
+        sourcefiles = spectbl.meta['SOURCEFILES']
+        del spectbl.meta['SOURCEFILES'] #otherwise this makes a giant nasty header
+    except KeyError:
+        sourcefiles = [spectbl.meta['FILENAME']]
+    spectbl.meta['FILENAME'] = name
     spectbl.write(name, overwrite=overwrite, format='fits')
     
     #but open it up to do some modification
     with fits.open(name, mode='update') as ftbl:
-        """
-        Writes spectbls to a standardized MUSCLES FITS file format.
-        (Or, rather, this function defines the standard.)
         
-        Parameters
-        ----------
-        spectbl : astropy table in MUSCLES format
-            The spectrum to be written to a MSUCLES FITS file. 
-        name : str
-            filename for the FITS output
-        overwrite : {True|False}
-            whether to overwrite if output file already exists
-            
-        Returns
-        -------
-        None
-        """
         #add name to first table
         ftbl[1].name = 'spectrum'
         
@@ -222,20 +230,11 @@ def phxdata(Teff, logg=4.5, FeH=0.0, aM=0.0, repo='ftp'):
     """
     Get a phoenix spectral data from the repo and return as an array.
     """
-    if repo == 'ftp':
-        url = phxpath(Teff, logg, FeH, aM)
-        fspec = fits.open(url)
-        return fspec[0].data
-    else:
-        raise NotImplementedError()
+    path = phxpath(Teff, logg, FeH, aM, repo=repo)
+    fspec = fits.open(path)
+    return fspec[0].data
 
 def __maketbl(data, specfile, sourcefiles=[]):
     star = specfile.split('_')[4]
     return utils.list2spectbl(data, star, specfile, sourcefiles)
-    
-def __inst_i(filename):
-    name = path.basename(filename)
-    inst = name.split('_')[1:4]
-    inst_str = '_'.join(inst)
-    return db.instruments.index(inst_str)
     

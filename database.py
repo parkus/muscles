@@ -6,22 +6,29 @@ Created on Fri Nov 07 15:51:54 2014
 """
 import os
 from astropy.io import fits
-from my_numpy import midpts
-from numpy import array, nonzero, unique, argsort, arange, hstack, logical_and
-import io
+from pandas import read_pickle
+from mypy.my_numpy import midpts
+from numpy import array, nonzero, unique, argsort, arange, hstack, logical_and, nan, isnan 
+import io, settings
 from itertools import product as iterproduct
 from urllib import urlretrieve
 from math import ceil
 
 datapath = r'C:\Users\Parke\Documents\Grad School\MUSCLES\Data'
-phxpath = os.path.join(datapath, 'phoenix')
+productspath = r'C:\Users\Parke\Documents\Grad School\MUSCLES\Products'
+codepath = r'C:\Users\Parke\Google Drive\Python\muscles'
+root = r'C:\Users\Parke\Google Drive\Grad School\PhD Work\MUSCLES'
 
+specstrings = ['_x1d', 'mod_euv', 'mod_lya', 'xmm', 'sx1', 'mod_phx']
 instruments = ['hst_cos_g130m','hst_cos_g160m','hst_cos_g230l','hst_sts_e140m',
                'hst_sts_e230m','hst_sts_e230h','hst_sts_g140m','hst_sts_g230l',
                'hst_sts_g430l','xmm_mos_-----','mod_lya_kevin','mod_euv_-----',
                'mod_phx_-----']
-foldersbyband = {'u':'uv', 'v':'visible', 'x':'x-ray'}
+foldersbyband = {'u':'uv', 'v':'visible', 'r':'ir', 'x':'x-ray'}
 
+# -----------------------------------------------------------------------------
+# PHOENIX DATABASE
+phxpath = os.path.join(datapath, 'phoenix')
 phxTgrid = hstack([arange(2300,7000,100),
                    arange(7000,12001,200)])
 phxggrid = arange(0.0, 6.1, 0.5)
@@ -32,8 +39,92 @@ phxgrids = [phxTgrid, phxggrid, phxZgrid, phxagrid]
 phxwave = fits.getdata(os.path.join(phxpath, 'wavegrid_hires.fits'))
 phxwave = hstack([[499.95], midpts(phxwave), [54999.875]])
 
+def fetchphxfiles(Trng=[2500,3500], grng=[4.0,5.5], FeHrng=[0.0, 0.0], 
+                  aMrng=[0.0, 0.0], repo=phxpath):
+    """
+    Download all Phoenix spectra covering the provided ranges. Does not
+    re-download files that already exist in the directory.
+    
+    Default values are from UV variability sample properties.
+    """
+    def inclusive(grid, rng):
+        use = logical_and(grid >= rng[0], grid <= rng[1])
+        return grid[use]
+    grids = map(inclusive, phxgrids, [Trng, grng, FeHrng, aMrng])
+    
+    combos = iterproduct(*grids)
+    paths = []
+    for combo in combos:
+        locpath = io.phxpath(*combo, repo=repo)
+        if not os.path.exists(locpath):
+            paths.append((locpath, io.phxpath(*combo, repo='ftp')))
+    
+    N = len(paths)
+    datasize = N*6.0/1024.0
+    print ('Beginning download of {} files, {:.3f} Gb. Ctrl-C to stop.'
+           ''.format(N,datasize))
+    print 'Progress bar (- = 5%):\n'
+    
+    Nbar = ceil(N/20.0)
+    for i,(loc, ftp) in enumerate(paths):
+        if i % Nbar == 0:
+            print '-',
+        urlretrieve(ftp,loc)
+        
+def phxspecpath(star):
+    name = 'r_mod_phx_-----_{}.fits'.format(star)
+    return os.path.join(datapath, 'ir', name)
+
+# -----------------------------------------------------------------------------
+# STELLAR PROPERTIES DATABASE
+
+proppath = os.path.join(root, 'star_properties.p')
+refpath = os.path.join(root, 'star_properties_references.p')
+errpospath = os.path.join(root, 'star_properties_errors_pos.p')
+errnegpath = os.path.join(root, 'star_properties_errors_neg.p')
+
+props = read_pickle(proppath)
+proprefs = read_pickle(refpath)
+properrspos =read_pickle(errpospath)
+properrsneg = read_pickle(errnegpath)
+
+stars = list(props.index)
+
+def __setormask(tbl, path, star, prop, value):
+    if value is None:
+        isstr = isinstance(tbl[prop][star], basestring)
+        tbl[prop][star] = '' if isstr else nan
+    else:
+        tbl[prop][star] = value
+    tbl.to_pickle(path)
+    
+def setprop(star, prop, value, poserr=None, negerr=None, ref=None):
+    setit = lambda tbl, path, value: __setormask(tbl, path, star, prop, value)
+    setit(props, proppath, value)
+    setit(properrspos, errpospath, poserr)
+    setit(properrsneg, errnegpath, negerr)
+    setit(proprefs, refpath, ref)
+    
+def printprop(star, name):
+    tbls = [props, properrsneg, properrspos, proprefs]
+    x, en, ep, ref = [t[name][star] for t in tbls]
+    if ref == '': ref = 'no reference'
+    print '{:f} -{:f} +{:f}\t{}'.format(x, en, ep, ref)
+    
+def phxinput(star):
+    Teff = props['Teff'][star]
+    kwds = {}
+    for key in ['logg', 'FeH', 'aM']:
+        x = props[key][star]
+        if ~isnan(x):
+            kwds[key] = x
+    return Teff, kwds
+
+# -----------------------------------------------------------------------------
+# SPECTRAL DATA ORGANIZATION
+
 def findfiles(path, substrings):
-    """Look for a file in directory at path that contains ALL of the strings
+    """Look for a files in directory at path that contains ALL of the strings
     in substrings in its filename."""
     def good(name):
         hasstring = [(s in name) for s in substrings]
@@ -42,31 +133,51 @@ def findfiles(path, substrings):
 
 def findsimilar(specfile, newstring):
     """Find a file with the same identifier as sepcfile, but that also contains
-    newstring int he file name. For example, find the the coadd version of the
+    newstring in the file name. For example, find the the coadd version of the
     u_hst_cos_g130m_gj832 observation."""
     base = parse_id(specfile)
     dirname = os.path.dirname(specfile)
     names = findfiles(dirname, [base, newstring])
     paths = [os.path.join(dirname, n) for n in names]
     return paths
+    
+def configfiles(star, configstring, folder=datapath):
+    """Find the spectra for the star that match configstring."""
+    allfiles = allspecfiles(star, folder=folder)
+    return filter(lambda f: configstring in f, allfiles)
 
-def allspecfiles(target, folder='.'):
-    """Find all the spectra for the target within the subdirectories of path
+def allspecfiles(star, folder=datapath):
+    """Find all the spectra for the star within the subdirectories of path
     using the file naming convention."""
-    specstrings = ['_x1d', 'mod_euv', 'mod_lya', 'xmm', 'sx1']
     isspec = lambda name: any([s in name for s in specstrings])
-    hastarget = lambda name: target in name
+    hasstar = lambda name: star in name
     
     subfolders = [folder]
     contents = [os.path.join(folder,p) for p in os.listdir(folder)]
     subfolders.extend(filter(os.path.isdir, contents))
+    subfolders = filter(lambda f: 'phoenix' not in f, subfolders)
     files = []
     for sf in subfolders:
         allfiles = os.listdir(sf)
-        targetfiles = filter(hastarget, allfiles)
-        specfiles = filter(isspec, targetfiles)
+        starfiles = filter(hasstar, allfiles)
+        specfiles = filter(isspec, starfiles)
         specfiles = [os.path.join(folder, sf, f) for f in specfiles]
         files.extend(specfiles)
+    
+    return files
+    
+def panfiles(star, folder=datapath):
+    """Return the files for the spectra to be spliced into a panspectrum,
+    replacing "raw" files with coadds and custom extractions as appropriate
+    and ordering according to how the spectra should be normalized."""
+    
+    allfiles = allspecfiles(star, folder=folder)
+    filterfiles = lambda s: filter(lambda ss: s in ss, allfiles)
+    files = map(filterfiles, settings.normorder)
+    files = reduce(lambda x,y: x+y, files)
+    
+    files = sub_coaddfiles(files)
+    files = sub_customfiles(files)
     
     return files
 
@@ -85,6 +196,23 @@ def parse_star(filename):
 def parse_id(filename):
     return parse_info(filename, 0, 5)
 
+def panpath(star):
+    name = 'panspectrum native resolution {}.fits'.format(star)
+    return os.path.join(productspath, name)
+    
+def Rpanpath(star):
+    name = 'panspectrum constant R {}.fits'.format(star)
+    return os.path.join(productspath, name)
+    
+def settingspath(star):
+    return os.path.join(root, 'settings', star+'.json')
+    
+def getinsti(filename):
+    name = os.path.basename(filename)
+    inst = name.split('_')[1:4]
+    inst_str = '_'.join(inst)
+    return instruments.index(inst_str)
+
 def group_by_instrument(lst):
     """Group the spectbls by instrument, returning a list of the groups. Useful
     for coaddition. Preserves order. lst can be a list of filenames or a list
@@ -94,7 +222,7 @@ def group_by_instrument(lst):
     if type(lst[0]) is str:
         specfiles = lst
     else:
-        specfiles = [spec.meta['filename'] for spec in lst]
+        specfiles = [spec.meta['FILENAME'] for spec in lst]
     allinsts = array(map(parse_instrument, specfiles))
     insts, ind = unique(allinsts, return_index=True)
     insts = insts[argsort(ind)]
@@ -163,7 +291,7 @@ def find_coaddfile(specfiles):
         
         #check that the coadd contains the same data as the spectbls
         #return none if any is missing
-        csourcefiles = coadd.meta['sourcefiles']
+        csourcefiles = coadd.meta['SOURCEFILES']
         for sf in specfiles:
             if sf not in csourcefiles:
                 return None
@@ -172,38 +300,6 @@ def find_coaddfile(specfiles):
     #if the file doesn't exist, return None
     else:
         return None
-
-def fetchphxfiles(Trng=[2500,3500], grng=[4.0,5.5], FeHrng=[0.0, 0.0], 
-                  aMrng=[0.0, 0.0], repo=phxpath):
-    """
-    Download all Phoenix spectra covering the provided ranges. Does not
-    re-download files that already exist in the directory.
-    
-    Default values are from UV variability sample properties.
-    """
-    def inclusive(grid, rng):
-        use = logical_and(grid >= rng[0], grid <= rng[1])
-        return grid[use]
-    grids = map(inclusive, phxgrids, [Trng, grng, FeHrng, aMrng])
-    
-    combos = iterproduct(*grids)
-    paths = []
-    for combo in combos:
-        locpath = io.phxpath(*combo, repo=repo)
-        if not os.path.exists(locpath):
-            paths.append((locpath, io.phxpath(*combo, repo='ftp')))
-    
-    N = len(paths)
-    datasize = N*6.0/1024.0
-    print ('Beginning download of {} files, {:.3f} Gb. Ctrl-C to stop.'
-           ''.format(N,datasize))
-    print 'Progress bar (- = 5%):\n'
-    
-    Nbar = ceil(N/20.0)
-    for i,(loc, ftp) in enumerate(paths):
-        if i % Nbar == 0:
-            print '-',
-        urlretrieve(ftp,loc)
 
 def auto_rename(folder):
     """
@@ -249,7 +345,7 @@ def auto_rename(folder):
                 inst = xhdr['instrume']
                 if inst == 'STIS': inst = 'STS'
                 grating = xhdr['opt_elem']
-                target = xhdr['targname']
+                star = xhdr['targname']
                 cenwave = xhdr['cenwave']
                 band = 'U' if cenwave < 4000.0 else 'V'
                 
@@ -261,7 +357,7 @@ def auto_rename(folder):
                         pass
                     opath = os.path.join(folder, oname)
                     original_name = fits.getval(opath, 'filename')
-                    newname = '_'.join([band, tele, inst, grating, target, 
+                    newname = '_'.join([band, tele, inst, grating, star, 
                                         original_name])
                     os.rename(opath, os.path.join(folder, newname.lower()))           
         except:
