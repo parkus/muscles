@@ -10,10 +10,8 @@ import database as db
 dqmask = {'cos' : (64 | 2048 | 1 | 256 | 128 | 32 |16),
           'sts' : (1 | 2 | 4 | 128 | 256 | 512 | 4096 | 8192)}
           
-normorder = ['cos', 'sts', 'xmm', 'mod_lya', 'mod_euv', 'mod_phx']
-
 spectbl_format =  {'units' : ['Angstrom']*2 + ['erg/s/cm2/Angstrom']*2 + ['s','',''],
-                   'dtypes' : ['f8']*5 + ['i2', 'i1'],
+                   'dtypes' : ['f8']*5 + ['i2', 'i2'],
                    'fmts' : ['.2f']*2 + ['.2e']*2 + ['.1f', 'b', 'd'],
                    'descriptions' : ['left (short,blue) edge of the wavelength bin',
                                      'right (long,red) edge of the wavelength bin',
@@ -26,9 +24,16 @@ spectbl_format =  {'units' : ['Angstrom']*2 + ['erg/s/cm2/Angstrom']*2 + ['s',''
                                      'the instrument.'],
                    'colnames' : ['w0','w1','flux','error','exptime','flags','instrument']}
                    
-prenormed = ['mod_lya', 'mod_euv']
+prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m']
 
 lyacut = [1213.5, 1218.0]
+
+specstrings = ['_x1d', 'mod_euv', 'mod_lya', 'xmm', 'sx1', 'mod_phx']
+#listed in normalization order
+instruments = ['hst_cos_g130m','hst_cos_g160m','hst_cos_g230l','hst_sts_e230m',
+               'hst_sts_e230h','hst_sts_g230l''hst_sts_e140m','hst_sts_g430l',
+               'xmm_mos_-----','mod_phx_-----','mod_lya_kevin','mod_euv_-----']
+foldersbyband = {'u':'uv', 'v':'visible', 'r':'ir', 'x':'x-ray'}
 
 def dontnormalize(filename_or_spectbl):
     fos = filename_or_spectbl

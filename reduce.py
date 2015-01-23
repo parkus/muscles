@@ -6,7 +6,7 @@ Created on Mon Oct 20 15:42:13 2014
 """
 
 import numpy as np
-from astropy.table import Table, Column
+from astropy.table import Table, Column, vstack
 from astropy.io import fits
 import mypy.my_numpy as mnp
 from math import sqrt, floor, log10
@@ -14,8 +14,9 @@ from mypy import specutils
 import database as db
 import utils, io, settings
 from spectralPhoton.hst.convenience import x2dspec
+from itertools import combinations
 
-def panspectrum(star, R=1000.0, savecoadds=True, savespecs=True):
+def panspectrum(star, R=1000.0, savespecs=True):
     """
     Coadd and splice the provided spectra into one panchromatic spectrum
     sampled at the native resolutions and constant R.
@@ -24,28 +25,17 @@ def panspectrum(star, R=1000.0, savecoadds=True, savespecs=True):
     listed in order of descending quality. 
     """
     files = db.panfiles(star)
-    spectbls = sum(map(io.read, files), [])
+    specs = sum(map(io.read, files), [])
     
     #make sure all spectra are of the same star
-    star = __same_star(spectbls)
+    star = __same_star(specs)
     
     #make sure spectra are each from a single source
-    for i,s in enumerate(spectbls):
+    for i,s in enumerate(specs):
         try: 
             __same_instrument([s])
         except ValueError:
             raise ValueError('More than one instrument used in spectbl {}'.format(i))
-    
-    #coadd all spectra from the same configuration
-    groups = db.group_by_instrument(spectbls)
-    specs = []
-    for group in groups:
-        filenames = [s.meta['FILENAME'] for s in group]
-        if len(set(filenames)) == 1:
-            specs.extend(group)
-        else:
-            cspec = coadd(group, savefits=savespecs)
-            specs.append(cspec)
     
     #parse the modeled from the observed spectra
 #    ismodel = lambda spec: 'mod' in spec.meta['FILENAME']
@@ -55,36 +45,40 @@ def panspectrum(star, R=1000.0, savecoadds=True, savespecs=True):
     #clip out any lya to leave that space for the reconstruction
     specs = [cullrange(s, settings.lyacut) for s in specs]
     
-    #normalize the measured spectra according to their input order if they
-    #overlap
-    #FIXME: make sure this is working right
-    N = len(specs)
-    for i in range(N):
-        if settings.dontnormalize(specs[i]): continue
-        for j in np.arange(i+1,N):
-            if settings.dontnormalize(specs[j]): continue
-            if __overlapping(specs[i], specs[j]):
-                specs[j] = normalize(specs[i], specs[j])
-    
-    #splice together all the measured spectra based on S/N
-    #FIXME: for now, sort by wavelength because splicing over gaps doesn't work
-    #should probably generalize the splicing later, however
-    specs.sort(key = lambda s: s['w1'][-1])
-    catspec = reduce(smartsplice, specs)
+    #normalize and splice according to input order
+    spec = specs.pop(0)
+    while len(specs):
+        addspec = specs.pop(0)
+        if __overlapping(spec, addspec) and ~settings.dontnormalize(addspec):
+            addspec = normalize(spec, addspec)
+        spec = smartsplice(spec, addspec)
+        
+#    for i in range(N):
+#        if settings.dontnormalize(specs[i]): continue
+#        for j in np.arange(i+1,N):
+#            if settings.dontnormalize(specs[j]): continue
+#            if __overlapping(specs[i], specs[j]):
+#                specs[j] = normalize(specs[i], specs[j])
+#    
+#    #splice together all the measured spectra based on S/N
+#    #FIXME: for now, sort by wavelength because splicing over gaps doesn't work
+#    #should probably generalize the splicing later, however
+#    specs.sort(key = lambda s: s['w1'][-1])
+#    catspec = reduce(smartsplice, specs)
     
     #splice the full extent of the models in
 #    catspec = reduce(splice, modelspecs, catspec)
     
     #resample at constant R
-    Rspec = powerbin(catspec, R)
+    Rspec = powerbin(spec, R)
     
     if savespecs:
         #%% save to fits
         paths = [db.panpath(star), db.Rpanpath(star)]
-        for spec, path in zip([catspec, Rspec], paths):
+        for spec, path in zip([spec, Rspec], paths):
             io.writefits(spec, path, overwrite=True)
             
-    return catspec,Rspec
+    return spec,Rspec
 
 def normalize(spectbla, spectblb, SNcut=2.0, method='area'):
     """
@@ -145,65 +139,100 @@ def smartsplice(spectbla, spectblb):
     both = [spectbla, spectblb]
     both.sort(key = lambda s: s['w0'][0])
     
-    #get their ranges
-    wra, wrb = [[s['w0'][0], s['w1'][-1]] for s in both]
+    #fill any gaps in the spectra
+    #FIXME: don't use gapless spectra for splicing
+    both = map(__fillgaps, both)
     
-    #check for overlap
-    if wrb[0] >= wra[1]: #they don't overlap
+    #just for convenience
+    spec0, spec1 = both
+    
+    #get their ranges
+    wr0, wr1 = [[s['w0'][0], s['w1'][-1]] for s in both]
+    
+    #get overlapping wavelengths
+    wr = [max(wr0[0], wr1[0]), min(wr0[1], wr1[1])]
+    
+    #splice according to different overlap situations
+    if wr[0] >= wr[1]: #they don't overlap
         return utils.vstack(both)
-    else: #they overlap
-        #resample to the finer spectrum to the resolution of the coarser
-        #figure out the (boolean) indices of the overlap
-        over = __argoverlap(*both)
-        #count the number of bin edges in the overlap to quanitfy resolution
-        res = map(np.sum, over)
-        #determine which is the lower resolution to use as the base for comparison
-        base = np.argmin(res)
-        #confine spectra to just the overlap, rebinning the higher res spectrum
-        i0,i1 = np.nonzero(over[base])[0][[0,-1]]
-        basespec = both[base][i0+1:i1-1]
-        w0base, w1base = basespec['w0'], basespec['w1']
-        basegrid = np.append(w0base, w1base[-1])
-        ospecs = [0,0]
-        ospecs[base] = basespec
-        ospecs[not base] = rebin(both[not base], basegrid) #rebin the finer spectrum
+    else: #they do overlap
+        #get the loose (one edge beyound wr) overlap of each spectrum
+        ospec0, ospec1 = [__inrange(s, wr) for s in both]
         
-        #now figure out where to splice the two
-        def bestsplice(spectbls): 
-        #determine the cumulative signal to noise, summing bins for every
-        #possible combo of the two spectra
-            dw = np.diff(basegrid)
-            fw = [s['flux']*dw for s in spectbls]
-            vw = [(s['error']*dw)**2 for s in spectbls]
-            cumsum = lambda x: np.append(0.0, np.cumsum(x))
-            fsum0, vsum0 = map(cumsum, [fw[0], vw[0]])
-            fsum1, vsum1 = map(cumsum, [fw[1][::-1], vw[1][::-1]])
-            totf = fsum0 + fsum1[::-1]
-            totv = vsum0 + vsum1[::-1]
-            fullSN = totf/np.sqrt(totv)
-            return np.argmax(fullSN)
+        #if either spectrum has nans for errors, don't use it for any of the
+        #overlap
+        def allnanerrs(ospec):
+            nans = np.isnan(ospec['error'])
+            return np.all(nans)
+        if allnanerrs(spec0):
+            return splice(spec0, spec1)
+        if allnanerrs(both[1]):
+            return splice(spec1, spec0)
             
-        if wrb[1] > wra[1]: #just the ends of the spectra overlap
-            #compute integrated SN for all possible splice positions, choose the best
-            i = bestsplice(ospecs)
-            globi = np.nonzero(over[1])[0][i]
-            splicespec = both[1][globi:]
-            return splice(both[0], splicespec)
-        else: #both[1] is fully within both[0]
-            #look for a single block of both[1] to put into both[0] that
-            #maximizes the SN
-            #start by finding left splice
-            i0 = bestsplice(ospecs)
-            temp = utils.vstack([ospecs[0][:i0], ospecs[1][i0:]])
-            #now find the right splice
-            i1 = bestsplice([temp, ospecs[1]])
-            if i0 >= i1: return both[0]
-            #TODO: these might be off by 1 since I shortened the base grid...
-            globi0 = np.nonzero(over[1])[0][i0]
-            globi1 = np.nonzero(over[1])[0][i1]
-            splicespec = both[1][globi0:globi1]
-            #TODO: deal with partial bins
-            return splice(both[0], splicespec)
+        #otherwise, find the best splice locations
+        #get all edges within the overlap
+        we0, we1 = [__edgesinrange(s, wr) for s in both]
+        we = np.hstack([we0, we1, wr])
+        we = np.sort(we)
+        
+        #function to compute total signal/noise for different splice locations
+        def fv(ospec, wr):
+            dw = wr[1] - wr[0]
+            wold = np.append(ospec['w0'], ospec['w1'][-1])
+            flux, err = specutils.rebin(wr, wold, ospec['flux'], ospec['error'])
+            f = flux*dw
+            v = (err*dw)**2
+            return f, v
+        
+        SN = []
+        enclosed = (wr1[1] < wr0[1])
+        
+        if enclosed:
+            #get all possible combinations of cuts
+            cuts = combinations(we, 2)
+            cuts = filter(lambda c: c[1] >= c[0], cuts)
+            
+            #computer overall SN for each
+            for cut in cuts:
+                ranges = [[wr[0], cut[0]], cut, [cut[1], wr[1]]]
+                left, mid, right = map(fv, [ospec0, ospec1, ospec0], ranges)
+                fs, vs = zip(left, mid, right)
+                SN.append(sum(fs)/sqrt(sum(vs)))
+            
+            #pick the best and splice the spectra
+            best = np.argmax(SN)
+            cut = cuts[best]
+            if cut[0] in we0:
+                left = spec0[spec0['w1'] <= cut[0]]
+                spec = splice(spec1, left)
+            else:
+                right = spec1[spec1['w0'] >= cut[0]]
+                spec = splice(spec0, right)
+            if cut[1] in we0:
+                right = spec0[spec0['w0'] >= cut[1]]
+                spec = splice(spec, right)
+            else:
+                left = spec[spec['w1'] <= cut[1]]
+                spec = splice(spec, left)
+            
+        #do the same, if not enclosed
+        else:
+            cuts = we[:-1]
+            for cut in cuts:
+                ranges = [[wr[0], cut], [cut, wr[1]]]
+                left, right = map(fv, [ospec0, ospec1], ranges)
+                fs, vs, = zip(left, right)
+                SN.append(sum(fs)/sqrt(sum(vs)))
+                
+        best = np.argmax(SN)
+        cut = cuts[best]
+        if cut in we0:
+            left = spec0[spec0['w1'] <= cut]
+            spec = splice(spec1, left)
+        else:
+            right = spec1[spec1['w0'] >= cut]
+            spec = splice(spec0, right)
+    return spec
 
 def splice(spectbla, spectblb):
     """
@@ -216,7 +245,7 @@ def splice(spectbla, spectblb):
     
     The spectra are assumed to be gapless.
     """
-    Na = len(spectbla) + 1
+    Na = len(spectbla)
     
     #define a function to adjust a cut off spectral element (row in spectbl)
     def cutoff(specrow, wnew, clipside):
@@ -233,23 +262,23 @@ def splice(spectbla, spectblb):
     #determine where the endpts of spectblb fall in spectbla
     wedges_a = np.append(spectbla['w0'], spectbla['w1'][-1])
     wrange_b = [spectblb['w0'][0], spectblb['w1'][-1]]
-    args = np.searchsorted(wedges_a, wrange_b)
+    args = np.searchsorted(wedges_a, wrange_b) - 1
     
     #deal with overlap
     speclist = []
     if args[0] == Na: #the left side of b is right of a
         speclist.extend([spectbla, spectblb])
-    elif args[0] > 0: #the left side of b is in a
-        leftspec = spectbla[:args[0]]
+    elif args[0] >= 0: #the left side of b is in a
+        leftspec = Table(spectbla[:args[0]+1], copy=True)
         leftspec[-1] = cutoff(leftspec[-1], spectblb[0]['w0'], 'right')
         speclist.extend([leftspec,spectblb])
     else: #the left side of b is left of a
         speclist.append(spectblb)
-    if args[1] == 0: #if the right side of b is left of a
+    if args[1] == -1: #if the right side of b is left of a
         speclist.append(spectbla)
-    if args[1] < Na: #if the right side of b is in a
+    elif args[1] < Na: #if the right side of b is in a
         #TODO: check
-        rightspec = spectbla[args[1]-1:]
+        rightspec = Table(spectbla[args[1]:], copy=True)
         rightspec[0] = cutoff(rightspec[0], spectblb[-1]['w1'], 'left')
         speclist.append(rightspec)
     
@@ -282,20 +311,22 @@ def coadd(spectbls, maskbaddata=True, savefits=False):
     
     sourcefiles = [s.meta['FILENAME'] for s in spectbls]
     
+    #FIXME: if all spectra are masked in the same place, don't mask any
     listify = lambda s: [spec[s].data for spec in spectbls]
     cols = ['w0','w1','flux','error','exptime','flags']
     w0, w1, f, e, expt, dq = map(listify, cols)
     we = [np.append(ww0,ww1[-1]) for ww0,ww1 in zip(w0,w1)]
     if maskbaddata:
-        dqmask = settings.dqmask[inst]
-        masks = [(ddq & dqmask) > 0 for ddq in dq]
+        spectrograph = db.parse_spectrograph(sourcefiles[0])
+        dqmask = settings.dqmask[spectrograph]
+        masks = __make_masks(we, dq, dqmask)
         cwe, cf, ce, cexpt, dq = specutils.coadd(we, f, e, expt, dq, masks)
     else:
         cwe, cf, ce, cexpt, dq = specutils.coadd(we, f, e, expt, dq)
     
     cw0, cw1 = cwe[:-1], cwe[1:]
     goodbins = (cexpt > 0)
-    cw0,cw1,cf,ce,cexpt = [v[goodbins] for v in [cw0, cw1, cf, ce, cexpt]] 
+    cw0,cw1,cf,ce,cexpt,dq = [v[goodbins] for v in [cw0, cw1, cf, ce, cexpt, dq]] 
        
     spectbl = utils.vecs2spectbl(cw0,cw1,cf,ce,cexpt,dq,inst,star,None,
                                  sourcefiles)
@@ -304,6 +335,17 @@ def coadd(spectbls, maskbaddata=True, savefits=False):
         io.writefits(spectbl, cfile, overwrite=True)
         spectbl.meta['FILENAME'] = cfile
     return spectbl
+    
+def auto_coadd(star, configs=None):
+    if configs is None:
+        groups = db.specfilegroups(star)
+    else:
+        if type(configs) is str: configs = [configs]
+        groups = [db.configfiles(star, config) for config in configs]
+        
+    for group in groups:
+        spectbls = sum(map(io.read, group), [])
+        coadd(spectbls, savefits=True)
     
 def phxspec(Teff, logg=4.5, FeH=0.0, aM=0.0, repo=db.phxpath):
     """
@@ -326,14 +368,15 @@ def phxspec(Teff, logg=4.5, FeH=0.0, aM=0.0, repo=db.phxpath):
     N = len(spec)
     err = np.ones(N)*np.nan
     expt,flags = np.zeros(N), np.zeros(N, 'i1')
-    insti = db.instruments.index('mod_phx_-----')
+    insti = settings.instruments.index('mod_phx_-----')
     source = insti*np.ones(N,'i1')
     data = [db.phxwave[:-1], db.phxwave[1:], spec, err, expt, flags, source]
     return utils.list2spectbl(data, '', '')
 
-def atuo_phxspec(star):
+def auto_phxspec(star):
     Teff, kwds = db.phxinput(star)
     spec = phxspec(Teff, **kwds)
+    spec.meta['STAR'] = star
     path = db.phxspecpath(star)
     io.writefits(spec, path, overwrite=True)
     return spec
@@ -354,7 +397,10 @@ def auto_customspec(star, specfiles=None):
             spectbl.rename_column('dq', 'flags')
             spectbl.meta['STAR'] = star
             spectbl.meta['SOURCEFILES'] = [x2dfile]
-            inst = db.getinsti(specfile)
+            try:
+                inst = db.getinsti(specfile)
+            except ValueError:
+                inst = -99
             n = len(spectbl)
             instcol = Column([inst]*n, 'instrument', 'i1')
             expt = fits.getval(x2dfile, 'exptime', extname='sci')
@@ -367,6 +413,7 @@ def auto_customspec(star, specfiles=None):
             "".format(config))
 
 def rebin(spec, newedges):
+    newedges = np.asarray(newedges)
     oldedges = np.append(spec['w0'], spec['w1'][-1])
     flux, error, flags = specutils.rebin(newedges, oldedges, spec['flux'], 
                                          spec['error'], spec['flags'])
@@ -377,6 +424,8 @@ def rebin(spec, newedges):
     expt = mnp.rebin(newedges, oldedges, spec['exptime']*dold)/dnew
     return utils.vecs2spectbl(w0, w1, flux, error, expt, flags, inst, star, fn, sf) 
 
+
+
 def __argoverlap(spectbl0, spectbl1):
     """ Find the (boolean) indices of the overlap of spectbl0 within spectbl1
     and the reverse.
@@ -386,10 +435,41 @@ def __argoverlap(spectbl0, spectbl1):
     over0w1 = mnp.inranges(grids[0], grids[1][[0,-1]])
     over1w0 = mnp.inranges(grids[1], grids[0][[0,-1]])
     return [over0w1[:-1], over1w0[:-1]]
-    
+
+def __inrange(spectbl, wr):
+    in0, in1 = [mnp.inranges(spectbl[s], wr) for s in ['w0', 'w1']]
+    return spectbl[in0 | in1]
+
+def __edgesinrange(spectbl, wr):
+    w = mnp.lace(spectbl['w0'], spectbl['w1'])
+    duplicates = np.append((w[:-1] == w[1:]), False)
+    w = w[~duplicates]
+    return w[mnp.inranges(w, wr)]
+
+def __fillgaps(spectbl, fill_value=np.nan):
+    """Fill any gaps in the wavelength range of spectbl with spome value."""
+    w0, w1 = spectbl['w0'], spectbl['w1']
+    gaps = ~np.isclose(w0[1:], w1[:-1])
+    if ~np.any(gaps):
+        return spectbl
+    i = np.nonzero(gaps)[0]
+    gw0 = w1[i]
+    gw1 = w0[i+1]
+    names = spectbl.colnames
+    names.remove('w0')
+    names.remove('w1')
+    cols = [Column(gw0, 'w0'), Column(gw1, 'w1')]
+    n = len(gw0)
+    for name in names:
+        cols.append(Column([fill_value]*n, name))
+    gaptbl = Table(cols)
+    filledtbl = vstack([spectbl, gaptbl])
+    filledtbl.sort('w0')
+    return filledtbl
+
 def __overlapping(spectbl0, spectbl1):
     """Check if they overlap."""
-    wr = lambda spec: [spec['w0'][0], spec['w1'][1]]
+    wr = lambda spec: [spec['w0'][0], spec['w1'][-1]]
     return any(np.digitize(wr(spectbl0), wr(spectbl1)) == 1)
     
 def __same_instrument(spectbls):
@@ -400,6 +480,34 @@ def __same_instrument(spectbls):
         raise ValueError('There are multiple instruments present in the '
                          'spectbls.')
     return instruments[0]
+
+def __make_masks(welist, dqlist, dqmask):
+    #make master grid
+    mwe = specutils.common_grid(welist)
+    
+    #rebin dq flags onto master grid, make masks, coadd those
+    mwe_ins = [mnp.inranges(mwe, we[[0,-1]]) for we in welist]
+    mwelist = [mwe[mwe_in] for mwe_in in mwe_ins]
+    rdqs = map(mnp.rebin_or, mwelist, welist, dqlist)
+    masks = [(rdq & dqmask) > 0 for rdq in rdqs]
+    
+    mmask = np.ones(len(mwe) - 1, bool)
+    for mask, mwe_in in zip(masks, mwe_ins):
+        i = np.nonzero(mwe_in)[0][:-1]
+        mmask[i] = mmask[i] & mask
+    
+    #find the ranges where every spectrum is masked
+    wbins = np.array([mwe[:-1], mwe[1:]]).T
+    badranges = specutils.flags2ranges(wbins, mmask)
+    
+    #set each mask to false over those ranges
+    masks = [(dq & dqmask) > 0 for dq in dqlist]
+    for we, mask in zip(welist, masks):
+        inbad0, inbad1 = [mnp.inranges(w, badranges) for w in [we[:-1], we[1:]]]
+        inbad = inbad0 | inbad1
+        mask[inbad] = False
+        
+    return masks
 
 def __same_star(spectbls):
     stars = np.array([s.meta['STAR'] for s in spectbls])

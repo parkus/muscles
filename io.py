@@ -11,7 +11,7 @@ import numpy as np
 from mypy.my_numpy import mids2edges
 from scipy.io import readsav as spreadsav
 import database as db
-import utils
+import utils, settings
 from astropy.table import Table
 
 phoenixbase = 'ftp://phoenix.astro.physik.uni-goettingen.de/HiResFITS/PHOENIX-ACES-AGSS-COND-2011/'
@@ -53,9 +53,8 @@ def readstdfits(specfile):
 def readfits(specfile):
     """Read a fits file into standardized table."""
     
+    observatory = db.parse_observatory(specfile)
     insti = db.getinsti(specfile)
-    inststr = db.instruments[insti]
-    observatory = inststr.split('_')[0].lower()
     
     spec = fits.open(specfile)
     if any([s in specfile for s in ['coadd', 'custom', 'mod']]):
@@ -182,7 +181,7 @@ def writefits(spectbl, name, overwrite=False):
             ftbl[1].header[key] = spectbl[name].description
             
         #add an extra bintable for the instrument identifiers
-        col = [fits.Column('instruments','13A',array=db.instruments)]
+        col = [fits.Column('instruments','13A',array=settings.instruments)]
         hdr = fits.Header()
         hdr['comment'] = ('This extension is a legend for the integer '
                           'identifiers in the instrument '

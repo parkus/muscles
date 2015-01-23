@@ -19,13 +19,6 @@ productspath = r'C:\Users\Parke\Documents\Grad School\MUSCLES\Products'
 codepath = r'C:\Users\Parke\Google Drive\Python\muscles'
 root = r'C:\Users\Parke\Google Drive\Grad School\PhD Work\MUSCLES'
 
-specstrings = ['_x1d', 'mod_euv', 'mod_lya', 'xmm', 'sx1', 'mod_phx']
-instruments = ['hst_cos_g130m','hst_cos_g160m','hst_cos_g230l','hst_sts_e140m',
-               'hst_sts_e230m','hst_sts_e230h','hst_sts_g140m','hst_sts_g230l',
-               'hst_sts_g430l','xmm_mos_-----','mod_lya_kevin','mod_euv_-----',
-               'mod_phx_-----']
-foldersbyband = {'u':'uv', 'v':'visible', 'r':'ir', 'x':'x-ray'}
-
 # -----------------------------------------------------------------------------
 # PHOENIX DATABASE
 phxpath = os.path.join(datapath, 'phoenix')
@@ -149,7 +142,7 @@ def configfiles(star, configstring, folder=datapath):
 def allspecfiles(star, folder=datapath):
     """Find all the spectra for the star within the subdirectories of path
     using the file naming convention."""
-    isspec = lambda name: any([s in name for s in specstrings])
+    isspec = lambda name: any([s in name for s in settings.specstrings])
     hasstar = lambda name: star in name
     
     subfolders = [folder]
@@ -166,14 +159,25 @@ def allspecfiles(star, folder=datapath):
     
     return files
     
+def specfilegroups(star, folder=datapath):
+    """Return a list of groups of files from the same instrument for
+    instruments that have more than one file."""
+    allfiles = allspecfiles(star, folder=folder)
+    filterfiles = lambda s: filter(lambda ss: s in ss, allfiles)
+    files = map(filterfiles, settings.instruments)
+    files = filter(lambda x: len(x) > 1, files)
+    return files
+    
 def panfiles(star, folder=datapath):
     """Return the files for the spectra to be spliced into a panspectrum,
     replacing "raw" files with coadds and custom extractions as appropriate
     and ordering according to how the spectra should be normalized."""
     
     allfiles = allspecfiles(star, folder=folder)
+    use = lambda name: any([s in name for s in settings.instruments])
+    allfiles = filter(use, allfiles)
     filterfiles = lambda s: filter(lambda ss: s in ss, allfiles)
-    files = map(filterfiles, settings.normorder)
+    files = map(filterfiles, settings.instruments)
     files = reduce(lambda x,y: x+y, files)
     
     files = sub_coaddfiles(files)
@@ -189,12 +193,16 @@ def parse_info(filename, start, stop):
 
 def parse_instrument(filename):
     return parse_info(filename, 1, 4)
+def parse_spectrograph(filename):
+    return parse_info(filename, 2, 3)
 def parse_band(filename):
     return parse_info(filename, 0, 1)
 def parse_star(filename):
     return parse_info(filename, 4, 5)
 def parse_id(filename):
     return parse_info(filename, 0, 5)
+def parse_observatory(filename):
+    return parse_info(filename, 1, 2)
 
 def panpath(star):
     name = 'panspectrum native resolution {}.fits'.format(star)
@@ -208,10 +216,7 @@ def settingspath(star):
     return os.path.join(root, 'settings', star+'.json')
     
 def getinsti(filename):
-    name = os.path.basename(filename)
-    inst = name.split('_')[1:4]
-    inst_str = '_'.join(inst)
-    return instruments.index(inst_str)
+    return settings.instruments.index(parse_instrument(filename))
 
 def group_by_instrument(lst):
     """Group the spectbls by instrument, returning a list of the groups. Useful

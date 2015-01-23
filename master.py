@@ -6,6 +6,9 @@ for star in db.stars:
     # rename files
     db.auto_rename(db.datapath)
     
+    # coadd spectra
+    db.auto_coadd(star)
+    
     # interpolate and save phoenix spectrum
     red.atuo_phxspec(star)
     

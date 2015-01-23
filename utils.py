@@ -98,4 +98,11 @@ def vstack(spectbls):
         data.append(np.concatenate([s[name] for s in spectbls]))
         
     return list2spectbl(data, star, '', sourcefiles)
+    
+def wedges(spectbl):
+    w0, w1 = spectbl['w0'], spectbl['w1']
+    if ~np.allclose(w0[1:], w1[:-1]):
+        raise ValueError('There are gaps in the spectrum.')
+    else:
+        return np.append(w0, w1[-1])
         
