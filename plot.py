@@ -16,6 +16,8 @@ def specstep(spectbl, *args, **kwargs):
     ----------
     spectbl : astropy table
         Spectrum
+    key : str, optional
+        Which table column to plot. Defaults to flux.
     err : {True|False}, optional
         Whether to plot errors. Default is false.
     *args, **kwargs
@@ -32,21 +34,26 @@ def specstep(spectbl, *args, **kwargs):
         err = kwargs['err']
         del kwargs['err']
     else:
-        err = False
+        err = True
+    if 'key' in kwargs:
+        key = kwargs['key']
+        del kwargs['key']
+    else:
+        key = 'flux'
     
     #parse data from table
-    w0, w1, f, e = array([spectbl[s] for s in ['w0','w1','flux','error']])
+    w0, w1, f, e = array([spectbl[s] for s in ['w0','w1',key,'error']])
+    
     wbins = array([w0, w1]).T
     
     #plot flux
-    if 'color' not in kwargs: kwargs['color'] = 'k'
     plts = specplot(wbins, f, *args, **kwargs)
     plt.xlabel('Wavelength [$\AA$]')
     plt.ylabel('Flux [erg/s/cm$^2$/$\AA$]')
     
     #plot error
     if err:
-        if 'color' not in kwargs: kwargs['color'] = 'r'
+        if 'alpha' not in kwargs: kwargs['alpha'] = 0.3
         errplts = specplot(wbins, e, *args, **kwargs)
         return plts, errplts
     else:
