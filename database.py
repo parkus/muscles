@@ -65,7 +65,7 @@ def fetchphxfiles(Trng=[2500,3500], grng=[4.0,5.5], FeHrng=[0.0, 0.0],
         urlretrieve(ftp,loc)
         
 def phxspecpath(star):
-    name = 'r_mod_phx_-----_{}.fits'.format(star)
+    name = 'r_mod_phx_-----_{}_interpolated.fits'.format(star)
     return os.path.join(datapath, 'ir', name)
 
 # -----------------------------------------------------------------------------
@@ -180,6 +180,7 @@ def panfiles(star, folder=datapath):
     files = map(filterfiles, settings.instruments)
     files = reduce(lambda x,y: x+y, files)
     
+    #sub in custom extractions
     files = sub_coaddfiles(files)
     files = sub_customfiles(files)
     
@@ -205,18 +206,23 @@ def parse_observatory(filename):
     return parse_info(filename, 1, 2)
 
 def panpath(star):
-    name = 'panspectrum native resolution {}.fits'.format(star)
+    name = '-_msl_pan_-----_{}_panspec_native_resolution.fits'.format(star)
     return os.path.join(productspath, name)
     
-def Rpanpath(star):
-    name = 'panspectrum constant R {}.fits'.format(star)
+def Rpanpath(star, R):
+    name = ('-_msl_pan_-----_{}_panspec_constant_R={:d}.fits'
+            ''.format(star, int(round(R))))
     return os.path.join(productspath, name)
     
 def settingspath(star):
     return os.path.join(root, 'settings', star+'.json')
     
 def getinsti(filename):
-    return settings.instruments.index(parse_instrument(filename))
+    try:
+        i = settings.instruments.index(parse_instrument(filename))
+    except ValueError:
+        i = -99
+    return i
 
 def group_by_instrument(lst):
     """Group the spectbls by instrument, returning a list of the groups. Useful

@@ -8,7 +8,7 @@ Created on Mon Nov 10 14:28:07 2014
 from os import path
 from astropy.io import fits
 import numpy as np
-from mypy.my_numpy import mids2edges
+from mypy.my_numpy import mids2edges, block_edges
 from scipy.io import readsav as spreadsav
 import database as db
 import utils, settings
@@ -29,12 +29,21 @@ def read(specfile):
     'exptime', 'flags', and 'source'. The 'source' column contains a number, where
     muscles.instruments[source_number] gives the aaa_bbb_ccccc string identifying
     the instrument.
+    
+    The star keyword is used to reject any spectra that are known to be bad
+    for that star.
     """
     
     readfunc = {'fits' : readfits, 'txt' : readtxt, 'sav' : readsav}
+    star = db.parse_star(specfile)
     i = specfile[::-1].find('.')
     fmt = specfile[-i:]
-    return readfunc[fmt](specfile)
+    specs = readfunc[fmt](specfile)
+    sets = settings.load(star)
+    for config, i in sets.reject_specs:
+        if config in specfile:
+            specs.pop(i)
+    return specs
 
 def readstdfits(specfile):
     """Read a fits file that was created by writefits."""
@@ -45,6 +54,9 @@ def readstdfits(specfile):
         spectbl.meta['SOURCEFILES'] = sourcefiles
     except KeyError:
         spectbl.meta['SOURCEFILES'] = []
+    
+    if 'hst' in specfile:
+        spectbl = __trimHSTtbl(spectbl)
     
     spectbl = utils.conform_spectbl(spectbl)
     
@@ -57,7 +69,7 @@ def readfits(specfile):
     insti = db.getinsti(specfile)
     
     spec = fits.open(specfile)
-    if any([s in specfile for s in ['coadd', 'custom', 'mod']]):
+    if any([s in specfile for s in ['coadd', 'custom', 'mod', 'panspec']]):
         return [readstdfits(specfile)]
     elif observatory == 'hst':
         sd, sh = spec[1].data, spec[1].header
@@ -71,6 +83,11 @@ def readfits(specfile):
         exptarr = np.ones(shape)*exptime
         datas = np.array([w0,w1,flux,err,exptarr,flags,iarr])
         datas = datas.swapaxes(0,1)
+        spectbls = [__maketbl(d, specfile) for d in datas]
+        
+        #cull off-detector data
+        spectbls = [__trimHSTtbl(spectbl) for spectbl in spectbls]
+            
     elif observatory == 'xmm':
         colnames = ['Wavelength', 'BinWidth', 'Flux', 'FluxError', 'Flux2']
         wmid, dw, cps, cpserr, flux = [spec[2].data[s][::-1] for s in colnames]
@@ -90,11 +107,12 @@ def readfits(specfile):
         flags = np.zeros(N, 'i1')
         source = np.ones(N)*insti
         datas = [[w0,w1,flux,err,expt,flags,source]]
+        spectbls = [__maketbl(d, specfile) for d in datas]
     else:
         raise Exception('fits2tbl cannot parse data from the {} observatory.'.format(observatory))
     
     spec.close()
-    spectbls = [__maketbl(d, specfile) for d in datas]
+    
     return spectbls
     
 def readtxt(specfile):
@@ -236,4 +254,13 @@ def phxdata(Teff, logg=4.5, FeH=0.0, aM=0.0, repo='ftp'):
 def __maketbl(data, specfile, sourcefiles=[]):
     star = specfile.split('_')[4]
     return utils.list2spectbl(data, star, specfile, sourcefiles)
+    
+def __trimHSTtbl(spectbl):
+    """trim off-detector portions on either end of spectbl"""
+    bad = (spectbl['flags'] & (128 | 4)) > 0
+    beg,end = block_edges(bad)
+    if len(beg):
+        return spectbl[end[0]:beg[-1]]
+    else:
+        return spectbl
     
