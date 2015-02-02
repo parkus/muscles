@@ -15,6 +15,7 @@ import database as db
 import utils, io, settings
 from spectralPhoton.hst.convenience import x2dspec
 from itertools import combinations_with_replacement as combos
+from scipy.stats import norm
 
 def panspectrum(star, R=10000.0, dR=1.0, savespecs=True):
     """
@@ -66,20 +67,27 @@ def panspectrum(star, R=10000.0, dR=1.0, savespecs=True):
             
     return spec,Rspec,dspec
 
-def normalize(spectbla, spectblb, method='chi2', flagmask=True):
+def normalize(spectbla, spectblb, flagmask=True):
     """
     Normalize the spectrum b to spectrum a. 
     
     The spectra are assumed to be orded by quality. Thus, spectra[0] is the
-    gold standard against which all others are normalized. Use only points with
-    S/N greater than SNcut when computing medians.
+    gold standard against which all others are normalized.
+    
+    spectblb is not normalized if:
+    - spectbla has all 0.0 errors (meaning it's a model)
+    - the normalization factor is consistent with 1.0 to greater than 95%
+        confidence
+        
+    Errors in spectblb are augmented using the quadratic approximation
+    according to the error in the normalization factor. 
     """
     
     #parse out the overlap
     overa, overb = utils.argoverlap(spectbla, spectblb, 'tight')
     
     #if speca has all nan errors, don't normalize to it
-    if np.all(np.isnan(spectbla[overa]['error'])):
+    if np.all(spectbla[overa]['error'] == 0.0):
         return spectblb
     
     #rebin to the coarser spectrum
@@ -91,42 +99,39 @@ def normalize(spectbla, spectblb, method='chi2', flagmask=True):
         ospecb = spectblb[overb]
         wbins = utils.wbins(ospecb)
         ospeca = rebin(spectbla, wbins)
-        
+    
     #mask data with flags
+    mask = np.zeros(len(ospeca))
     if flagmask:
-        mask = (ospeca['flags'] > 0) | (ospecb['flags'] > 0)
-        ospeca['flux'][mask] = np.nan
-        ospecb['flux'][mask] = np.nan
+        flagged = (ospeca['flags'] > 0) | (ospecb['flags'] > 0)
+        mask[flagged] = True
         
-    #mask data where speca has nan errors
-    nanmask = (ospeca['error'] == np.nan)
-    ospeca['flux'][nanmask] = np.nan
-    ospecb['flux'][nanmask] = np.nan
+    #mask data where speca has 0.0 errors
+    zeroerr = (ospeca['error'] == 0.0)
+    mask[zeroerr] = True
+    good = ~mask
     
     #compute normalization factor
     ospecs = [ospeca, ospecb]
-    if method == 'meidan':
-        meds = [np.nanmedian(spec['flux']) for spec in ospecs]
-        normfac = meds[0]/meds[1]
-    elif method == 'area':
-        dw = wbins[:,1] - wbins[:,0]
-        getarea = lambda spec: np.nansum(spec['flux']*dw)
-        oareas = map(getarea, ospecs)
-        normfac = oareas[0]/oareas[1]
-    elif method == 'chi2':
-        #see word file in scratchwork for derivation for this
-        if np.all(np.isnan(spectblb[overb]['error'])):
-            normfac = mnp.chi2normseries(ospeca['flux'], 1.0, ospecb['flux'], 1.0)
-        else:
-            normfac = mnp.chi2normseries(ospeca['flux'], ospeca['error'],
-                                         ospecb['flux'], ospecb['error'])
-        
-    else:
-        raise NotImplementedError('Normalization method not recognized/implemented.')
+    dw = wbins[:,1] - wbins[:,0]
+    def getarea(spec):
+        area = np.sum(spec['flux'][good]*dw)
+        error = mnp.quadsum(spec['error'][good]*dw)
+        return area, error
+    areas, errors = zip(*map(getarea, ospecs))
+    diff = abs(areas[1] - areas[0])
+    differr = mnp.quadsum(errors)
+    p = 2.0 * (1.0 - norm.cdf(diff, loc=0.0, scale=differr))
+    if p < 0.05:
+        return spectblb
+    normfac = areas[0]/areas[1]
+    normfacerr = sqrt((errors[0]/areas[1])**2 + 
+                      (areas[0]*errors[1]/areas[1]**2))
     
     normspec = Table(spectblb, copy=True)
     normspec['flux'] *= normfac
-    normspec['error'] *= normfac
+    normspec['error'] *= mnp.quadsum([normspec['error']*normfac,
+                                      normspec['flux']*normfacerr], axis=0)
     return normspec
 
 def smartsplice(spectbla, spectblb):
@@ -172,17 +177,20 @@ def smartsplice(spectbla, spectblb):
     #get the loose (one edge beyound wr) overlap of each spectrum
     ospec0, ospec1 = [__inrange(s, wr) for s in both]
     
-    #if either spectrum has nans for errors, don't use it for any of the
+    #if either spectrum has zeros for errors, don't use it for any of the
     #overlap
-    def allnanerrs(spec):
-        nans = np.isnan(spec['error'])
-        return np.all(nans)
+    allzeroerrs = lambda spec: np.all(spec['error'] == 0.0)
+    
     #somehow the error for one of the phx entries is being changed to 0
     #from nan, so doing allnan on the original spectrum is a workaround
-    if allnanerrs(spec0) or allnanerrs(ospec0):
+    ismodel0 = allzeroerrs(ospec0) or allzeroerrs(spec0)
+    ismodel1 = allzeroerrs(ospec1) or allzeroerrs(spec1)
+    if ismodel1 and not ismodel0:
         return splice(spec0, spec1)
-    if allnanerrs(spec1) or allnanerrs(ospec1):
+    if ismodel0 and not ismodel1:
         return splice(spec1, spec0)
+    if ismodel0 and ismodel1:
+        return NotImplementedError('Not sure how to splice two models together.')
         
     #otherwise, find the best splice locations
     #get all edges within the overlap
