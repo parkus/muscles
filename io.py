@@ -134,7 +134,7 @@ def readtxt(specfile):
         w0, w1 = we[:-1], we[1:]
         flux = np.array(iflux)/(w1 - w0)
         N = len(flux)
-        err = np.ones(N)*np.nan
+        err = np.zeros(N)
         expt,flags = np.zeros(N), np.zeros(N,'i1')
         source = db.getinsti(specfile)*np.ones(N)
         return [__maketbl([w0,w1,flux,err,expt,flags,source], specfile)]
@@ -155,7 +155,7 @@ def readsav(specfile):
     we = mids2edges(wmid, 'left', 'linear-x')
     w0, w1 = we[:-1], we[1:]
     N = len(flux)
-    err = np.ones(N)*np.nan
+    err = np.zeros(N)
     expt,flags = np.zeros(N), np.zeros(N, 'i1')
     source = db.getinsti(specfile)*np.ones(N)
     return [__maketbl([w0,w1,flux,err,expt,flags,source], specfile)]

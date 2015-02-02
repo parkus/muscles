@@ -16,7 +16,7 @@ import utils, io, settings
 from spectralPhoton.hst.convenience import x2dspec
 from itertools import combinations_with_replacement as combos
 
-def panspectrum(star, R=10000.0, savespecs=True):
+def panspectrum(star, R=10000.0, dR=1.0, savespecs=True):
     """
     Coadd and splice the provided spectra into one panchromatic spectrum
     sampled at the native resolutions and constant R.
@@ -52,16 +52,19 @@ def panspectrum(star, R=10000.0, savespecs=True):
             addspec = normalize(spec, addspec)
         spec = smartsplice(spec, addspec)
     
-    #resample at constant R
+    #resample at constant R and dR
     Rspec = powerbin(spec, R)
+    newedges = np.arange(np.min(spec['w0']), np.max(spec['w1']), dR)
+    newbins = utils.edges2bins(newedges)
+    dspec = rebin(spec, newbins)
     
     if savespecs:
         #%% save to fits
-        paths = [db.panpath(star), db.Rpanpath(star, R)]
-        for s, path in zip([spec, Rspec], paths):
+        paths = [db.panpath(star), db.Rpanpath(star, R), db.dpanpath(star, dR)]
+        for s, path in zip([spec, Rspec, dspec], paths):
             io.writefits(s, path, overwrite=True)
             
-    return spec,Rspec
+    return spec,Rspec,dspec
 
 def normalize(spectbla, spectblb, method='chi2', flagmask=True):
     """
@@ -96,7 +99,7 @@ def normalize(spectbla, spectblb, method='chi2', flagmask=True):
         ospecb['flux'][mask] = np.nan
         
     #mask data where speca has nan errors
-    nanmask = ospeca['error'] == np.nan
+    nanmask = (ospeca['error'] == np.nan)
     ospeca['flux'][nanmask] = np.nan
     ospecb['flux'][nanmask] = np.nan
     
@@ -404,7 +407,7 @@ def phxspec(Teff, logg=4.5, FeH=0.0, aM=0.0, repo=db.phxpath):
     
     #make spectbl
     N = len(spec)
-    err = np.ones(N)*np.nan
+    err = np.zeros(N)
     expt,flags = np.zeros(N), np.zeros(N, 'i1')
     insti = settings.instruments.index('mod_phx_-----')
     source = insti*np.ones(N,'i1')
@@ -425,7 +428,11 @@ def auto_customspec(star, specfiles=None):
     for custom in ss.custom_extractions:
         config = custom['config']
         if 'hst' in config:
-            x1dfile = filter(lambda f: config in f, specfiles)[0]
+            x1dfile = db.sourcespecfiles(star, config)
+            if len(x1dfile) > 1:
+                raise NotImplementedError('')
+            else:
+                x1dfile = x1dfile[0]
             x2dfile = x1dfile.replace('x1d','x2d')
             specfile = x1dfile.replace('x1d', 'custom_spec')
             dqmask = settings.dqmask[db.parse_spectrograph(specfile)]

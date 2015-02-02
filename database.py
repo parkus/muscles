@@ -134,19 +134,40 @@ def findsimilar(specfile, newstring):
     paths = [os.path.join(dirname, n) for n in names]
     return paths
     
-def configfiles(star, configstring, folder=datapath):
+def configfiles(star, configstring):
     """Find the spectra for the star that match configstring."""
-    allfiles = allspecfiles(star, folder=folder)
+    allfiles = allspecfiles(star)
     return filter(lambda f: configstring in f, allfiles)
 
-def allspecfiles(star, folder=datapath):
+def sourcespecfiles(star, configstring):
+    allfiles = allsourcefiles(star)
+    f = filter(lambda f: configstring in f, allfiles)
+    return f
+
+def coaddfile(star, configstring):
+    allfiles = allspecfiles(star)
+    f = filter(lambda f: configstring in f and 'coadd' in f, allfiles)
+    if len(f) > 1:
+        raise Exception('Multiple files found.')
+    else:
+        return f[0]
+    
+def customfile(star, configstring):
+    allfiles = allspecfiles(star)
+    f = filter(lambda f: configstring in f and 'custom_spec' in f, allfiles)
+    if len(f) > 1:
+        raise Exception('Multiple files found.')
+    else:
+        return f[0]
+
+def allspecfiles(star):
     """Find all the spectra for the star within the subdirectories of path
     using the file naming convention."""
     isspec = lambda name: any([s in name for s in settings.specstrings])
     hasstar = lambda name: star in name
     
-    subfolders = [folder]
-    contents = [os.path.join(folder,p) for p in os.listdir(folder)]
+    subfolders = [datapath]
+    contents = [os.path.join(datapath,p) for p in os.listdir(datapath)]
     subfolders.extend(filter(os.path.isdir, contents))
     subfolders = filter(lambda f: 'phoenix' not in f, subfolders)
     files = []
@@ -154,26 +175,30 @@ def allspecfiles(star, folder=datapath):
         allfiles = os.listdir(sf)
         starfiles = filter(hasstar, allfiles)
         specfiles = filter(isspec, starfiles)
-        specfiles = [os.path.join(folder, sf, f) for f in specfiles]
+        specfiles = [os.path.join(datapath, sf, f) for f in specfiles]
         files.extend(specfiles)
     
     return files
     
-def specfilegroups(star, folder=datapath):
+def allsourcefiles(star):
+    allfiles = allspecfiles(star)
+    return filter(lambda s: not ('coadd' in s or 'custom' in s), allfiles)
+    
+def specfilegroups(star):
     """Return a list of groups of files from the same instrument for
     instruments that have more than one file."""
-    allfiles = allspecfiles(star, folder=folder)
+    allfiles = allsourcefiles(star)
     filterfiles = lambda s: filter(lambda ss: s in ss, allfiles)
     files = map(filterfiles, settings.instruments)
     files = filter(lambda x: len(x) > 1, files)
     return files
     
-def panfiles(star, folder=datapath):
+def panfiles(star):
     """Return the files for the spectra to be spliced into a panspectrum,
     replacing "raw" files with coadds and custom extractions as appropriate
     and ordering according to how the spectra should be normalized."""
     
-    allfiles = allspecfiles(star, folder=folder)
+    allfiles = allspecfiles(star)
     use = lambda name: any([s in name for s in settings.instruments])
     allfiles = filter(use, allfiles)
     filterfiles = lambda s: filter(lambda ss: s in ss, allfiles)
@@ -212,6 +237,11 @@ def panpath(star):
 def Rpanpath(star, R):
     name = ('-_msl_pan_-----_{}_panspec_constant_R={:d}.fits'
             ''.format(star, int(round(R))))
+    return os.path.join(productspath, name)
+    
+def dpanpath(star, dR):
+    name = ('-_msl_pan_-----_{}_panspec_constant_dR={:.1f} angstrom.fits'
+            ''.format(star, float(dR)))
     return os.path.join(productspath, name)
     
 def settingspath(star):
@@ -264,6 +294,7 @@ def sub_coaddfiles(specfiles):
     groups = group_by_instrument(specfiles)
     result = []
     for group in groups:
+        group = filter(lambda s: 'coadd' not in s, group)
         coaddfile = find_coaddfile(group)
         if coaddfile is not None:
             result.append(coaddfile)
@@ -280,7 +311,8 @@ def sub_customfiles(specfiles):
         if len(customfiles) > 1:
             raise ValueError('Multiple matching files.')
         elif len(customfiles) == 1:
-            result.append(customfiles[0])
+            if customfiles[0] not in result:
+                result.append(customfiles[0])
         else:
             result.append(name)
     return result

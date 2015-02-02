@@ -8,6 +8,13 @@ from numpy import array
 import matplotlib.pyplot as plt
 from mypy.specutils import plot as specplot
 
+def plotrange(spectbl, w0, w1, *args, **kwargs):
+    """
+    Same as spectstep, but restricted to a given range.
+    """
+    keep = (spectbl['w1'] > w0) & (spectbl['w0'] < w1)
+    specstep(spectbl[keep], *args, **kwargs)
+
 def specstep(spectbl, *args, **kwargs):
     """
     Plot the spectrum using a stairstep curve and preserving any gaps.
@@ -47,14 +54,15 @@ def specstep(spectbl, *args, **kwargs):
     wbins = array([w0, w1]).T
     
     #plot flux
-    plts = specplot(wbins, f, *args, **kwargs)
+    fplt = specplot(wbins, f, *args, **kwargs)
     plt.xlabel('Wavelength [$\AA$]')
     plt.ylabel('Flux [erg/s/cm$^2$/$\AA$]')
     
     #plot error
     if err:
-        if 'alpha' not in kwargs: kwargs['alpha'] = 0.3
-        errplts = specplot(wbins, e, *args, **kwargs)
-        return plts, errplts
+        if 'alpha' not in kwargs: kwargs['alpha'] = 0.4
+        if 'color' not in kwargs: kwargs['color'] = fplt.get_color()
+        eplt = specplot(wbins, e, *args, **kwargs)
+        return fplt, eplt
     else:
-        return plts
+        return fplt

@@ -24,24 +24,25 @@ spectbl_format =  {'units' : ['Angstrom']*2 + ['erg/s/cm2/Angstrom']*2 + ['s',''
                                      'the instrument.'],
                    'colnames' : ['w0','w1','flux','error','exptime','flags','instrument']}
                    
-prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m', 'cos_g230l',
-             'sts_g230l', 'sts_g430l']
+#prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m', 'cos_g230l',
+#             'sts_g230l', 'sts_g430l']
 
-lyacut = [1213.5, 1218.0]
+lyacut = [1208.0, 1222.0]
 
-specstrings = ['_x1d', 'mod_euv', 'mod_lya', 'xmm', 'sx1', 'mod_phx']
+specstrings = ['_x1d', 'mod_euv', 'mod_lya', 'xmm', 'sx1', 'mod_phx', 'coadd',
+               'custom_spec']
 #listed in normalization order
 instruments = ['hst_cos_g130m','hst_cos_g160m','hst_cos_g230l','hst_sts_g230l',
                'hst_sts_e230m','hst_sts_e230h','hst_sts_e140m','hst_sts_g430l',
                'mod_euv_-----','xmm_mos_-----','mod_phx_-----','mod_lya_kevin']
 foldersbyband = {'u':'uv', 'v':'visible', 'r':'ir', 'x':'x-ray'}
 
-def dontnormalize(filename_or_spectbl):
-    fos = filename_or_spectbl
-    if type(fos) is not str:
-        fos = fos.meta['FILENAME']
-    isprenormed = [(s in fos) for s in prenormed]
-    return any(isprenormed)
+#def dontnormalize(filename_or_spectbl):
+#    fos = filename_or_spectbl
+#    if type(fos) is not str:
+#        fos = fos.meta['FILENAME']
+#    isprenormed = [(s in fos) for s in prenormed]
+#    return any(isprenormed)
         
 class StarSettings:
     def __init__(self, star):
