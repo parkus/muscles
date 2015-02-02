@@ -199,12 +199,23 @@ def writefits(spectbl, name, overwrite=False):
             ftbl[1].header[key] = spectbl[name].description
             
         #add an extra bintable for the instrument identifiers
-        col = [fits.Column('instruments','13A',array=settings.instruments)]
+        cols = [fits.Column('instruments','13A', array=settings.instruments),
+                fits.Column('bitvalues', 'I', array=settings.instvals)]
         hdr = fits.Header()
         hdr['comment'] = ('This extension is a legend for the integer '
                           'identifiers in the instrument '
-                          'column of the previous extension.')
-        idhdu = fits.BinTableHDU.from_columns(col, header=hdr, name='legend')
+                          'column of the previous extension. Instruments '
+                          'are identified by bitwise flags so that they '
+                          'any combination of instruments contributing to '
+                          'the data wihtin a spectral element can be '
+                          'identified together. For example, if instruments '
+                          '4 and 16, 100 and 10000 in binary, both contribute '
+                          'to the data in a bin, then that bin will have the '
+                          'value 20, or 10100 in binary, to signify that '
+                          'both instruments 4 and 16 have contributed. '
+                          'This is identical to the handling of bitwise '
+                          'data quality flags.')
+        idhdu = fits.BinTableHDU.from_columns(cols, header=hdr, name='legend')
         ftbl.append(idhdu)
         
         #add another bintable for the sourcefiles, if needed
@@ -257,7 +268,11 @@ def __maketbl(data, specfile, sourcefiles=[]):
     
 def __trimHSTtbl(spectbl):
     """trim off-detector portions on either end of spectbl"""
-    bad = (spectbl['flags'] & (128 | 4)) > 0
+    name = path.basename(spectbl.meta['FILENAME'])
+    if '_cos_' in name:
+        bad = (spectbl['flags'] & 128) > 0
+    elif '_sts_' in name:
+        bad = (spectbl['flags'] & (128 | 4)) > 0
     beg,end = block_edges(bad)
     if len(beg):
         return spectbl[end[0]:beg[-1]]

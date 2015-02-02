@@ -250,9 +250,9 @@ def settingspath(star):
 def getinsti(filename):
     try:
         i = settings.instruments.index(parse_instrument(filename))
+        return 2**i
     except ValueError:
-        i = -99
-    return i
+        return -99
 
 def group_by_instrument(lst):
     """Group the spectbls by instrument, returning a list of the groups. Useful

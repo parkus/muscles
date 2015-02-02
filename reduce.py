@@ -67,7 +67,7 @@ def panspectrum(star, R=10000.0, dR=1.0, savespecs=True):
             
     return spec,Rspec,dspec
 
-def normalize(spectbla, spectblb, flagmask=True):
+def normalize(spectbla, spectblb, flagmask=False):
     """
     Normalize the spectrum b to spectrum a. 
     
@@ -101,7 +101,7 @@ def normalize(spectbla, spectblb, flagmask=True):
         ospeca = rebin(spectbla, wbins)
     
     #mask data with flags
-    mask = np.zeros(len(ospeca))
+    mask = np.zeros(len(ospeca), bool)
     if flagmask:
         flagged = (ospeca['flags'] > 0) | (ospecb['flags'] > 0)
         mask[flagged] = True
@@ -115,23 +115,23 @@ def normalize(spectbla, spectblb, flagmask=True):
     ospecs = [ospeca, ospecb]
     dw = wbins[:,1] - wbins[:,0]
     def getarea(spec):
-        area = np.sum(spec['flux'][good]*dw)
-        error = mnp.quadsum(spec['error'][good]*dw)
+        area = np.sum(spec['flux'][good]*dw[good])
+        error = mnp.quadsum(spec['error'][good]*dw[good])
         return area, error
     areas, errors = zip(*map(getarea, ospecs))
     diff = abs(areas[1] - areas[0])
     differr = mnp.quadsum(errors)
     p = 2.0 * (1.0 - norm.cdf(diff, loc=0.0, scale=differr))
-    if p < 0.05:
+    if p > 0.05:
         return spectblb
     normfac = areas[0]/areas[1]
     normfacerr = sqrt((errors[0]/areas[1])**2 + 
-                      (areas[0]*errors[1]/areas[1]**2))
+                      (areas[0]*errors[1]/areas[1]**2)**2)
     
     normspec = Table(spectblb, copy=True)
+    normspec['error'] = mnp.quadsum([normspec['error']*normfac,
+                                     normspec['flux']*normfacerr], axis=0)
     normspec['flux'] *= normfac
-    normspec['error'] *= mnp.quadsum([normspec['error']*normfac,
-                                      normspec['flux']*normfacerr], axis=0)
     return normspec
 
 def smartsplice(spectbla, spectblb):
@@ -486,14 +486,14 @@ def rebin(spec, newbins):
     oldedges = utils.wedges(spec)
     flux, error, flags = specutils.rebin(newedges, oldedges, spec['flux'], 
                                          spec['error'], spec['flags'])
+    insts = mnp.rebin_or(newedges, oldedges, spec['instrument'])
                                          
     #spectbl accoutrments
     star, fn, sf = [spec.meta[s] for s in ['STAR', 'FILENAME', 'SOURCEFILES']]
     dold, dnew = np.diff(oldedges), np.diff(newedges)
     expt = mnp.rebin(newedges, oldedges, spec['exptime']*dold)/dnew
-    inst = np.array([db.getinsti(fn)]*len(expt))
     
-    return utils.vecs2spectbl(w0, w1, flux, error, expt, flags, inst, star, fn, sf) 
+    return utils.vecs2spectbl(w0, w1, flux, error, expt, flags, insts, star, fn, sf) 
 
 def __inrange(spectbl, wr):
     in0, in1 = [mnp.inranges(spectbl[s], wr) for s in ['w0', 'w1']]
