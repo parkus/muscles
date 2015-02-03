@@ -76,12 +76,13 @@ def readfits(specfile):
         flux, err = sd['flux'], sd['error']
         shape = flux.shape
         iarr = np.ones(shape)*insti
-        exptime = sh['exptime']
         wmid, flags = sd['wavelength'], sd['dq']
         wedges = np.array([mids2edges(wm, 'left', 'linear-x') for wm in wmid])
         w0, w1 = wedges[:,:-1], wedges[:,1:]
-        exptarr = np.ones(shape)*exptime
-        datas = np.array([w0,w1,flux,err,exptarr,flags,iarr])
+        exptarr, start, end = [np.ones(shape)*sh[s] for s in 
+                               ['exptime', 'expstart', 'expend']]
+        normfac = np.ones(shape)
+        datas = np.array([w0,w1,flux,err,exptarr,flags,iarr,normfac,start,end])
         datas = datas.swapaxes(0,1)
         spectbls = [__maketbl(d, specfile) for d in datas]
         
@@ -103,10 +104,11 @@ def readfits(specfile):
         fluxfac = flux/cps
         err = cpserr*fluxfac
         N = len(w0)
-        expt = np.nan*np.zeros(N)
+        expt, start, end = [np.nan*np.zeros(N)]*3
+        normfac = np.ones(N)
         flags = np.zeros(N, 'i1')
         source = np.ones(N)*insti
-        datas = [[w0,w1,flux,err,expt,flags,source]]
+        datas = [[w0,w1,flux,err,expt,flags,source,normfac,start,end]]
         spectbls = [__maketbl(d, specfile) for d in datas]
     else:
         raise Exception('fits2tbl cannot parse data from the {} observatory.'.format(observatory))
@@ -136,8 +138,11 @@ def readtxt(specfile):
         N = len(flux)
         err = np.zeros(N)
         expt,flags = np.zeros(N), np.zeros(N,'i1')
+        start, end = [np.nan*np.zeros(N)]*2
+        normfac = np.ones(N)
         source = db.getinsti(specfile)*np.ones(N)
-        return [__maketbl([w0,w1,flux,err,expt,flags,source], specfile)]
+        data = [w0,w1,flux,err,expt,flags,source,normfac,start,end]
+        return [__maketbl(data, specfile)]
     else:
         raise Exception('A parser for {} files has not been implemented.'.format(specfile[2:9]))
         
@@ -148,17 +153,16 @@ def readsav(specfile):
     sav = spreadsav(specfile)
     wmid = sav['w140']
     flux = sav['lya_mod']
-#    velocity_range = 300 #km/s
-#    wrange = velocity_range/3e5*1215.67*np.array([-1,1]) + 1215.67
-#    keep = np.digitize(wmid, wrange) == 1
-#    wmid, flux = wmid[keep], flux[keep]
     we = mids2edges(wmid, 'left', 'linear-x')
     w0, w1 = we[:-1], we[1:]
     N = len(flux)
     err = np.zeros(N)
     expt,flags = np.zeros(N), np.zeros(N, 'i1')
     source = db.getinsti(specfile)*np.ones(N)
-    return [__maketbl([w0,w1,flux,err,expt,flags,source], specfile)]
+    normfac = np.ones(N)
+    start, end = [np.zeros(N)*np.nan]
+    data = [w0,w1,flux,err,expt,flags,source,normfac,start,end]
+    return [__maketbl(data, specfile)]
     
 def writefits(spectbl, name, overwrite=False):
     """

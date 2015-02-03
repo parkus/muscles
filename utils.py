@@ -41,8 +41,8 @@ def conform_spectbl(spectbl):
         cols.append(Column(spectbl[n], n, dt, unit=u, description=de, format=f))
     return Table(cols, meta=meta)
     
-def vecs2spectbl(w0, w1, flux, err, exptime, flags, instrument, star, 
-                 filename, sourcefiles=[]):
+def vecs2spectbl(w0, w1, flux, err, exptime, flags, normfac, start, end, 
+                 instrument, star, filename, sourcefiles=[]):
     """
     Assemble the vector data into the standard MUSCLES spectbl format.
     
@@ -59,8 +59,9 @@ def vecs2spectbl(w0, w1, flux, err, exptime, flags, instrument, star,
     """
     N = len(flux)
     expand = lambda vec: vec if hasattr(vec, '__iter__') else np.array([vec]*N)
-    exptime, flags, instrument = map(expand, [exptime, flags, instrument])
-    datalist = [w0, w1, flux, err, exptime, flags, instrument]
+    vecs = map(expand, [exptime, flags, instrument, normfac, start, end])
+    [exptime, flags, instrument, normfac, start, end] = vecs
+    datalist = [w0, w1, flux, err, exptime, flags, instrument, normfac, start, end]
     return list2spectbl(datalist, star, filename, sourcefiles)
 
 def list2spectbl(datalist, star, filename, sourcefiles=[]):

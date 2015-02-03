@@ -382,14 +382,14 @@ def auto_rename(folder):
                 def isspec(s):
                     return (root + '_x1d.fits') in s or (root + '_sx1.fits') in s
                 
-                specfile = name if isspec(name) else filter(isspec, names)[0]
-                xpath = os.path.join(folder,specfile)
-                xhdr = fits.getheader(xpath)
-                inst = xhdr['instrume']
+#                specfile = name if isspec(name) else filter(isspec, names)[0]
+#                xpath = os.path.join(folder,specfile)
+#                xhdr = fits.getheader(xpath)
+                inst = hdr['instrume']
                 if inst == 'STIS': inst = 'STS'
-                grating = xhdr['opt_elem']
-                star = xhdr['targname']
-                cenwave = xhdr['cenwave']
+                grating = hdr['opt_elem']
+                star = hdr['targname']
+                cenwave = hdr['cenwave']
                 band = 'U' if cenwave < 4000.0 else 'V'
                 
                 obsnames = filter(lambda s: root in s, names) + [name]

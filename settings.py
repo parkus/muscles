@@ -10,9 +10,9 @@ import database as db
 dqmask = {'cos' : (64 | 2048 | 1 | 256 | 128 | 32 | 16),
           'sts' : (1 | 2 | 4 | 128 | 256 | 512 | 4096 | 8192)}
           
-spectbl_format =  {'units' : ['Angstrom']*2 + ['erg/s/cm2/Angstrom']*2 + ['s','',''],
-                   'dtypes' : ['f8']*5 + ['i2', 'i2'],
-                   'fmts' : ['.2f']*2 + ['.2e']*2 + ['.1f', 'b', 'd'],
+spectbl_format =  {'units' : ['Angstrom']*2 + ['erg/s/cm2/Angstrom']*2 + ['s','','','','','mjd','mjd'],
+                   'dtypes' : ['f8']*5 + ['i2']*2 + ['f8']*3,
+                   'fmts' : ['.2f']*2 + ['.2e']*2 + ['.1f', 'b', 'd', '.2f', '.2f', '.2f'],
                    'descriptions' : ['left (short,blue) edge of the wavelength bin',
                                      'right (long,red) edge of the wavelength bin',
                                      'average flux over the bin',
@@ -21,8 +21,12 @@ spectbl_format =  {'units' : ['Angstrom']*2 + ['erg/s/cm2/Angstrom']*2 + ['s',''
                                      'data quality flags (specific to the instrument)',
                                      'identifier for the instrument that is the source of the '
                                      'data. use muscles.instruments[identifier] to determine '
-                                     'the instrument.'],
-                   'colnames' : ['w0','w1','flux','error','exptime','flags','instrument']}
+                                     'the instrument',
+                                     'noramlization factor applied to the '
+                                     'source spectrum',
+                                     'modified julian date of start of first exposure',
+                                     'modified julian date of end of last exposure'],
+                   'colnames' : ['w0','w1','flux','error','exptime','flags','instrument','normfac','expstart','expend']}
                    
 prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m']
 

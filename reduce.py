@@ -362,23 +362,37 @@ def coadd(spectbls, maskbaddata=True, savefits=False):
     sourcefiles = [s.meta['FILENAME'] for s in spectbls]
     
     listify = lambda s: [spec[s].data for spec in spectbls]
-    cols = ['w0','w1','flux','error','exptime','flags']
-    w0, w1, f, e, expt, dq = map(listify, cols)
+    cols = ['w0', 'w1', 'flux', 'error', 'exptime', 'flags', 'normfac', 
+            'expstart', 'expend']
+    w0, w1, f, e, expt, dq, normfac, start, end = map(listify, cols)
     we = [np.append(ww0,ww1[-1]) for ww0,ww1 in zip(w0,w1)]
+    
+#    if np.any(np.asarray(normfac) != 1.0):
+#        raise NotImplementedError("Can't deal with normfacs != 1.0 in coaddition.")
+    
     if maskbaddata:
         spectrograph = db.parse_spectrograph(sourcefiles[0])
         dqmask = settings.dqmask[spectrograph]
         masks = __make_masks(we, dq, dqmask)
         cwe, cf, ce, cexpt, dq = specutils.coadd(we, f, e, expt, dq, masks)
+#        for i in range(len(masks)):
+#            start[i][masks[i]] = np.inf
+#            end[i][masks[i]] = -np.inf
     else:
         cwe, cf, ce, cexpt, dq = specutils.coadd(we, f, e, expt, dq)
     
+#    cstart = np.min(np.asarray(start), axis=0)
+#    cend = np.max(np.asarray(end), axis=0)
+    
+    #fixme: these should be handled properly in coadding
+    cstart, cend = np.min(start), np.max(end)
+    cnorm = np.ones(cf.shape)
     cw0, cw1 = cwe[:-1], cwe[1:]
     goodbins = (cexpt > 0)
-    cw0,cw1,cf,ce,cexpt,dq = [v[goodbins] for v in [cw0, cw1, cf, ce, cexpt, dq]] 
-       
-    spectbl = utils.vecs2spectbl(cw0,cw1,cf,ce,cexpt,dq,inst,star,None,
-                                 sourcefiles)
+    data = [cw0,cw1,cf,ce,cexpt,dq,inst,cnorm,cstart,cend]
+    data = [v[goodbins] for v in data if not np.isscalar(v)] 
+    spectbl = utils.list2spectbl(data, star, None, sourcefiles)
+    
     if savefits:
         cfile = db.coaddpath(sourcefiles[0])
         io.writefits(spectbl, cfile, overwrite=True)
