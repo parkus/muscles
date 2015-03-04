@@ -74,6 +74,8 @@ class StarSettings:
         self.custom_ranges = {'configs':[], 'ranges':[]}
 
     def add_custom_extraction(self, config, **kwds):
+        """Add a custom extraction os a config string and then kwds to provide
+        to the custom extraction function in reduce."""
         d = {'config' : config, 'kwds' : kwds}
         self.custom_extractions.append(d)
 
@@ -94,6 +96,8 @@ class StarSettings:
             return None
 
     def add_reject(self, config, i=0):
+        """Add a spectrum to the reject list as a config string and number
+        specifying the segment/order to reject."""
         self.reject_specs.append([config, i])
 
     def save(self):
