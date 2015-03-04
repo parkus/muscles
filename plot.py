@@ -7,6 +7,7 @@ Created on Wed Nov 19 12:11:41 2014
 from numpy import array
 import matplotlib.pyplot as plt
 from mypy.specutils import plot as specplot
+import io
 
 def plotrange(spectbl, w0, w1, *args, **kwargs):
     """
@@ -37,6 +38,8 @@ def specstep(spectbl, *args, **kwargs):
     errplts : list, optional
         Same as above, but for errors, if plotted.
     """
+    if type(spectbl) is str:
+        spectbl = io.read(spectbl)
     if 'key' in kwargs:
         key = kwargs['key']
         del kwargs['key']
