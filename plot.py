@@ -39,7 +39,8 @@ def specstep(spectbl, *args, **kwargs):
         Same as above, but for errors, if plotted.
     """
     if type(spectbl) is str:
-        spectbl = io.read(spectbl)
+        spectbls = io.read(spectbl)
+        map(specstep, spectbls)
     if 'key' in kwargs:
         key = kwargs['key']
         del kwargs['key']
