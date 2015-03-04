@@ -13,36 +13,50 @@ from scipy.io import readsav as spreadsav
 import database as db
 import utils, settings
 from astropy.table import Table
+from warnings import warn
 
 phoenixbase = 'ftp://phoenix.astro.physik.uni-goettingen.de/HiResFITS/PHOENIX-ACES-AGSS-COND-2011/'
 
-def read(specfile):
-    """A catch-all function to read in FITS spectra from all variety of 
+def readpans(star):
+    """
+    Read in all panspectra for a star and return as a list.
+    """
+    panfiles = db.allpans(star)
+    return sum(map(read, panfiles), [])
+
+def read(specfiles):
+    """A catch-all function to read in FITS spectra from all variety of
     instruments and provide standardized output as a list of astropy tables.
-    
-    The standardized filename 'w_aaa_bbb_ccccc_..._.fits, where aaa is the 
-    observatory (mod used for modeled data), bbb is the instrument (or model 
-    type), and ccccc is the filter/grating (w is 
+
+    The standardized filename 'w_aaa_bbb_ccccc_..._.fits, where aaa is the
+    observatory (mod used for modeled data), bbb is the instrument (or model
+    type), and ccccc is the filter/grating (w is
     the spectral band) is used to determine how to parse the FITS file .
-    
+
     The table has columns 'w0','w1' for the wavelength edges, 'flux', 'error',
     'exptime', 'flags', and 'source'. The 'source' column contains a number, where
     muscles.instruments[source_number] gives the aaa_bbb_ccccc string identifying
     the instrument.
-    
+
     The star keyword is used to reject any spectra that are known to be bad
     for that star.
     """
-    
+    #if a list of files is provided, reach each and stack the spectra in a list
+    if hasattr(specfiles, '__iter__'):
+        return sum(map(read, specfiles), [])
+
+    specfiles = db.validpath(specfiles)
+
     readfunc = {'fits' : readfits, 'txt' : readtxt, 'sav' : readsav}
-    star = db.parse_star(specfile)
-    i = specfile[::-1].find('.')
-    fmt = specfile[-i:]
-    specs = readfunc[fmt](specfile)
+    star = db.parse_star(specfiles)
+    i = specfiles[::-1].find('.')
+    fmt = specfiles[-i:]
+    specs = readfunc[fmt](specfiles)
     sets = settings.load(star)
-    for config, i in sets.reject_specs:
-        if config in specfile:
-            specs.pop(i)
+    if 'coadd' not in specfiles and 'custom' not in specfiles:
+        for config, i in sets.reject_specs:
+            if config in specfiles:
+                specs.pop(i)
     return specs
 
 def readstdfits(specfile):
@@ -54,20 +68,20 @@ def readstdfits(specfile):
         spectbl.meta['SOURCEFILES'] = sourcefiles
     except KeyError:
         spectbl.meta['SOURCEFILES'] = []
-    
+
     if 'hst' in specfile:
         spectbl = __trimHSTtbl(spectbl)
-    
+
     spectbl = utils.conform_spectbl(spectbl)
-    
+
     return spectbl
-    
+
 def readfits(specfile):
     """Read a fits file into standardized table."""
-    
+
     observatory = db.parse_observatory(specfile)
     insti = db.getinsti(specfile)
-    
+
     spec = fits.open(specfile)
     if any([s in specfile for s in ['coadd', 'custom', 'mod', 'panspec']]):
         return [readstdfits(specfile)]
@@ -79,16 +93,16 @@ def readfits(specfile):
         wmid, flags = sd['wavelength'], sd['dq']
         wedges = np.array([mids2edges(wm, 'left', 'linear-x') for wm in wmid])
         w0, w1 = wedges[:,:-1], wedges[:,1:]
-        exptarr, start, end = [np.ones(shape)*sh[s] for s in 
+        exptarr, start, end = [np.ones(shape)*sh[s] for s in
                                ['exptime', 'expstart', 'expend']]
         normfac = np.ones(shape)
         datas = np.array([w0,w1,flux,err,exptarr,flags,iarr,normfac,start,end])
         datas = datas.swapaxes(0,1)
         spectbls = [__maketbl(d, specfile) for d in datas]
-        
+
         #cull off-detector data
         spectbls = [__trimHSTtbl(spectbl) for spectbl in spectbls]
-            
+
     elif observatory == 'xmm':
         colnames = ['Wavelength', 'BinWidth', 'Flux', 'FluxError', 'Flux2']
         wmid, dw, cps, cpserr, flux = [spec[2].data[s][::-1] for s in colnames]
@@ -112,16 +126,16 @@ def readfits(specfile):
         spectbls = [__maketbl(d, specfile) for d in datas]
     else:
         raise Exception('fits2tbl cannot parse data from the {} observatory.'.format(observatory))
-    
+
     spec.close()
-    
+
     return spectbls
-    
+
 def readtxt(specfile):
     """
-    Reads data from text files into standardized astropy table output. 
+    Reads data from text files into standardized astropy table output.
     """
-    
+
     if 'mod_euv' in specfile.lower():
         f = open(specfile)
         wmid, iflux = [],[]
@@ -145,10 +159,10 @@ def readtxt(specfile):
         return [__maketbl(data, specfile)]
     else:
         raise Exception('A parser for {} files has not been implemented.'.format(specfile[2:9]))
-        
+
 def readsav(specfile):
     """
-    Reads data from IDL sav files into standardized astropy table output. 
+    Reads data from IDL sav files into standardized astropy table output.
     """
     sav = spreadsav(specfile)
     wmid = sav['w140']
@@ -160,24 +174,24 @@ def readsav(specfile):
     expt,flags = np.zeros(N), np.zeros(N, 'i1')
     source = db.getinsti(specfile)*np.ones(N)
     normfac = np.ones(N)
-    start, end = [np.zeros(N)*np.nan]
+    start, end = [np.zeros(N)*np.nan]*2
     data = [w0,w1,flux,err,expt,flags,source,normfac,start,end]
     return [__maketbl(data, specfile)]
-    
+
 def writefits(spectbl, name, overwrite=False):
     """
     Writes spectbls to a standardized MUSCLES FITS file format.
     (Or, rather, this function defines the standard.)
-    
+
     Parameters
     ----------
     spectbl : astropy table in MUSCLES format
-        The spectrum to be written to a MSUCLES FITS file. 
+        The spectrum to be written to a MSUCLES FITS file.
     name : str
         filename for the FITS output
     overwrite : {True|False}
         whether to overwrite if output file already exists
-        
+
     Returns
     -------
     None
@@ -190,18 +204,18 @@ def writefits(spectbl, name, overwrite=False):
         sourcefiles = [spectbl.meta['FILENAME']]
     spectbl.meta['FILENAME'] = name
     spectbl.write(name, overwrite=overwrite, format='fits')
-    
+
     #but open it up to do some modification
     with fits.open(name, mode='update') as ftbl:
-        
+
         #add name to first table
         ftbl[1].name = 'spectrum'
-        
+
         #add column descriptions
         for i,name in enumerate(spectbl.colnames):
             key = 'TDESC' + str(i+1)
             ftbl[1].header[key] = spectbl[name].description
-            
+
         #add an extra bintable for the instrument identifiers
         cols = [fits.Column('instruments','13A', array=settings.instruments),
                 fits.Column('bitvalues', 'I', array=settings.instvals)]
@@ -221,7 +235,7 @@ def writefits(spectbl, name, overwrite=False):
                           'data quality flags.')
         idhdu = fits.BinTableHDU.from_columns(cols, header=hdr, name='legend')
         ftbl.append(idhdu)
-        
+
         #add another bintable for the sourcefiles, if needed
         if len(sourcefiles):
             maxlen = max([len(sf) for sf in sourcefiles])
@@ -231,18 +245,18 @@ def writefits(spectbl, name, overwrite=False):
             hdr['comment'] = ('This extension contains a list of the source '
                               'files that were incorporated into this '
                               'spectrum.')
-            sfhdu = fits.BinTableHDU.from_columns(col, header=hdr, 
+            sfhdu = fits.BinTableHDU.from_columns(col, header=hdr,
                                                   name='sourcefiles')
             ftbl.append(sfhdu)
-        
+
         ftbl.flush()
-        
-def phxpath(Teff, logg=4.5, FeH=0.0, aM=0.0, repo='ftp'):
+
+def phxurl(Teff, logg=4.5, FeH=0.0, aM=0.0, repo='ftp'):
     """
     Constructs the URL for the phoenix spectrum file for a star with effective
     temperature Teff, log surface gravity logg, metalicity FeH, and alpha
     elemnt abundance aM.
-    
+
     Does not check that the URL is actually valid, and digits beyond the
     precision of the numbers used in the path will be truncated.
     """
@@ -251,25 +265,37 @@ def phxpath(Teff, logg=4.5, FeH=0.0, aM=0.0, repo='ftp'):
     astr = '.Alpha={:+5.2f}'.format(aM) if aM != 0.0 else ''
     name = ('lte{T:05.0f}-{g:4.2f}{z}{a}.PHOENIX-ACES-AGSS-COND-2011-HiRes.fits'
             ''.format(T=Teff, g=logg, z=zstr, a=astr))
-    
+
     if repo == 'ftp':
         folder = 'Z' + zstr + astr + '/'
         return phoenixbase + folder + name
     else:
         return path.join(repo, name)
-    
-def phxdata(Teff, logg=4.5, FeH=0.0, aM=0.0, repo='ftp'):
+
+def phxdata(Teff, logg=4.5, FeH=0.0, aM=0.0, repo='ftp', ftpbackup=True):
     """
     Get a phoenix spectral data from the repo and return as an array.
+
+    If ftpbackup is True, the ftp repository will be quieried if the file
+    isn't found in the specified repo location and the file will be saved
+    in the specified location.
     """
-    path = phxpath(Teff, logg, FeH, aM, repo=repo)
-    fspec = fits.open(path)
+    path = phxurl(Teff, logg, FeH, aM, repo=repo)
+    try:
+        fspec = fits.open(path)
+    except IOError:
+        if ftpbackup and repo != 'ftp':
+            warn('PHX file not found in specified repo, pulling from ftp.')
+            db.fetchphxfile(Teff, logg, FeH, aM, repo=repo)
+            fspec = fits.open(path)
+        else:
+            raise IOError('File not found at {}.'.format(path))
     return fspec[0].data
 
 def __maketbl(data, specfile, sourcefiles=[]):
     star = specfile.split('_')[4]
     return utils.list2spectbl(data, star, specfile, sourcefiles)
-    
+
 def __trimHSTtbl(spectbl):
     """trim off-detector portions on either end of spectbl"""
     name = path.basename(spectbl.meta['FILENAME'])
@@ -278,8 +304,9 @@ def __trimHSTtbl(spectbl):
     elif '_sts_' in name:
         bad = (spectbl['flags'] & (128 | 4)) > 0
     beg,end = block_edges(bad)
-    if len(beg):
+    if len(beg) >= 2:
         return spectbl[end[0]:beg[-1]]
+    elif len(beg) == 1:
+        return spectbl[~bad]
     else:
         return spectbl
-    

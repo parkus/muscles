@@ -4,13 +4,13 @@ import muscles.reduce as red
 for star in db.stars:
 
     # rename files
-    db.auto_rename(db.datapath)
+#    db.auto_rename(db.datapath)
     
     # coadd spectra
-    db.auto_coadd(star)
+    red.auto_coadd(star)
     
     # interpolate and save phoenix spectrum
-    red.atuo_phxspec(star)
+    red.auto_phxspec(star)
     
     # make custom extractions
     red.auto_customspec(star)

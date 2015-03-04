@@ -15,6 +15,13 @@ keys = ['units', 'dtypes', 'fmts', 'descriptions', 'colnames']
 spectbl_format = [settings.spectbl_format[key] for key in keys]
 units, dtypes, fmts, descriptions, colnames = spectbl_format
 
+def isechelle(str_or_spectbl):
+    if type(str_or_spectbl) is str:
+        name = str_or_spectbl
+    else:
+        name = str_or_spectbl.meta['FILENAME']
+    return '_sts_e' in name
+
 def printrange(spectbl, w0, w1):
     keep = (spectbl['w1'] > w0) & (spectbl['w0'] < w1)
     print spectbl[keep]
@@ -41,8 +48,8 @@ def conform_spectbl(spectbl):
         cols.append(Column(spectbl[n], n, dt, unit=u, description=de, format=f))
     return Table(cols, meta=meta)
     
-def vecs2spectbl(w0, w1, flux, err, exptime, flags, normfac, start, end, 
-                 instrument, star, filename, sourcefiles=[]):
+def vecs2spectbl(w0, w1, flux, err, exptime, flags, instrument, normfac,
+                 start, end, star, filename, sourcefiles=[]):
     """
     Assemble the vector data into the standard MUSCLES spectbl format.
     
@@ -57,10 +64,6 @@ def vecs2spectbl(w0, w1, flux, err, exptime, flags, normfac, start, end,
     -------
     spectbl : MUSCLES spectrum (astropy) table
     """
-    N = len(flux)
-    expand = lambda vec: vec if hasattr(vec, '__iter__') else np.array([vec]*N)
-    vecs = map(expand, [exptime, flags, instrument, normfac, start, end])
-    [exptime, flags, instrument, normfac, start, end] = vecs
     datalist = [w0, w1, flux, err, exptime, flags, instrument, normfac, start, end]
     return list2spectbl(datalist, star, filename, sourcefiles)
 
@@ -81,6 +84,12 @@ def list2spectbl(datalist, star, filename, sourcefiles=[]):
     spectbl : MUSCLES spectrum (astropy) table
     """
     
+    #expand any scalar values
+    N = len(datalist[2]) #length of flux vector
+    expand = lambda vec: vec if hasattr(vec, '__iter__') else np.array([vec]*N)
+    datalist = map(expand, datalist)
+    
+    #make table
     cols = [Column(d,n,dt,description=dn,unit=u,format=f) for d,n,dt,dn,u,f in
             zip(datalist,colnames,dtypes,descriptions,units,fmts)]
     meta = {'FILENAME' : filename,
