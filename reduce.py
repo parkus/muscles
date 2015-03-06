@@ -499,7 +499,7 @@ def auto_phxspec(star):
     Teff, kwds = db.phxinput(star)
     spec = phxspec(Teff, **kwds)
     spec.meta['STAR'] = star
-    path = db.phxspecpath(star)
+    path = db.phxpath(star)
     io.writefits(spec, path, overwrite=True)
 
 def auto_customspec(star, specfiles=None):

@@ -152,7 +152,7 @@ def readtxt(specfile):
         N = len(flux)
         err = np.zeros(N)
         expt,flags = np.zeros(N), np.zeros(N,'i1')
-        start, end = [np.nan*np.zeros(N)]*2
+        start, end = [np.zeros(N)]*2
         normfac = np.ones(N)
         source = db.getinsti(specfile)*np.ones(N)
         data = [w0,w1,flux,err,expt,flags,source,normfac,start,end]
@@ -174,7 +174,7 @@ def readsav(specfile):
     expt,flags = np.zeros(N), np.zeros(N, 'i1')
     source = db.getinsti(specfile)*np.ones(N)
     normfac = np.ones(N)
-    start, end = [np.zeros(N)*np.nan]*2
+    start, end = [np.zeros(N)]*2
     data = [w0,w1,flux,err,expt,flags,source,normfac,start,end]
     return [__maketbl(data, specfile)]
 
