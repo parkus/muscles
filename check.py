@@ -104,11 +104,16 @@ def vetcoadd(star, config):
     specstep(coadd, lw=2.0, c='k')
     plt.title(path.basename(coadd.meta['FILENAME']))
 
-def vetpanspec(star):
+def vetpanspec(pan_or_star):
     """Plot unnormalized components of the panspec with the panspec to see that
     all choices were good. Phoenix spectrum is excluded because it is too big."""
-    panspec = io.read(db.panpath(star))[0]
-    files = db.panfiles(star)
+    if type(pan_or_star) is str:
+        star = pan_or_star
+        panspec = io.read(db.panpath(star))[0]
+    else:
+        panspec = pan_or_star
+        star = panspec.meta['STAR']
+    files = db.panfiles(star)[0]
     for f in files:
         if 'phx' in f: continue
         specs = io.read(f)

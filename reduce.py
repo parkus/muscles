@@ -21,14 +21,15 @@ from warnings import warn
 colnames = settings.spectbl_format['colnames']
 
 def theworks(star, R=10000.0, dw=1.0):
-    # coadd spectra
-    auto_coadd(star)
 
     # interpolate and save phoenix spectrum
     auto_phxspec(star)
 
     # make custom extractions
     auto_customspec(star)
+
+    # coadd spectra
+    auto_coadd(star)
 
     # make panspectrum
     panspectrum(star, R=R, dw=dw) #panspec and Rspec

@@ -40,8 +40,7 @@ prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m']
 
 lyacut = [1208.0, 1222.0]
 
-specstrings = ['_x1d', 'mod_euv', 'mod_lya', 'xmm', 'sx1', 'mod_phx', 'coadd',
-               'custom_spec']
+specstrings = ['_x1d', 'mod_euv', 'mod_lya', 'spec', 'sx1', 'mod_phx', 'coadd']
 #listed in normalization order
 instruments = ['hst_cos_g130m','hst_cos_g160m','hst_cos_g230l','hst_sts_g230l',
                'hst_sts_e230m','hst_sts_e230h','hst_sts_e140m','hst_sts_g430l',
