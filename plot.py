@@ -40,7 +40,7 @@ def specstep(spectbl, *args, **kwargs):
     """
     if type(spectbl) is str:
         spectbls = io.read(spectbl)
-        return map(specstep, spectbls)
+        return [specstep(s, *args, **kwargs) for s in spectbls]
     if 'key' in kwargs:
         key = kwargs['key']
         del kwargs['key']
