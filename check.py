@@ -11,6 +11,7 @@ from astropy.table import Table
 from astropy.io import fits
 import database as db
 import io, settings
+import reduce as red
 from plot import specstep
 import numpy as np
 from os import path
@@ -104,7 +105,7 @@ def vetcoadd(star, config):
     specstep(coadd, lw=2.0, c='k')
     plt.title(path.basename(coadd.meta['FILENAME']))
 
-def vetpanspec(pan_or_star):
+def vetpanspec(pan_or_star, constant_dw=None):
     """Plot unnormalized components of the panspec with the panspec to see that
     all choices were good. Phoenix spectrum is excluded because it is too big."""
     if type(pan_or_star) is str:
@@ -114,17 +115,25 @@ def vetpanspec(pan_or_star):
         panspec = pan_or_star
         star = panspec.meta['STAR']
     files = db.panfiles(star)[0]
+
+    if constant_dw is None:
+        plotfun = specstep
+    else:
+        def plotfun(spec, **kwargs):
+            s = red.evenbin(spec, constant_dw)
+            return specstep(s, **kwargs)
+
     for f in files:
         if 'phx' in f: continue
         specs = io.read(f)
         for spec in specs:
-            p = specstep(spec, err=True)[0]
+            p = plotfun(spec, err=True)[0]
             x = (spec['w0'][0] + spec['w0'][-1])/2.0
             y = np.mean(spec['flux'])
             inst = db.parse_instrument(f)
             plt.text(x, y, inst, bbox={'facecolor':'w'}, ha='center',
                      va='center', color=p.get_color())
-    specstep(panspec, color='k', alpha=0.5)
+    plotfun(panspec, color='k', alpha=0.5)
 
 def examinedates(star):
     """Plot the min and max obs dates to make sure everything looks peachy."""
@@ -225,8 +234,8 @@ def __plotribbon(mid, hgt, color, x):
     #lace if mid and hgt aren't scalar
     if not np.isscalar(mid):
         x = lace(x, x[1:-1])
-        lo = lace(lo, lo, 1)
-        hi = lace(hi, hi, 1)
+        lo = lace(lo, lo[:, 1:-1], 1)
+        hi = lace(hi, hi[:, 1:-1], 1)
     else:
         lo, hi = [lo], [hi]
 

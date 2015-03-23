@@ -5,11 +5,12 @@ Created on Tue Nov 18 18:02:03 2014
 @author: Parke
 """
 
-import settings
+import settings, io
 import mypy.my_numpy as mnp
 import numpy as np
 from astropy.table import Table, Column
 from astropy.table import vstack as tblstack
+from os import path
 
 keys = ['units', 'dtypes', 'fmts', 'descriptions', 'colnames']
 spectbl_format = [settings.spectbl_format[key] for key in keys]
@@ -22,9 +23,17 @@ def isechelle(str_or_spectbl):
         name = str_or_spectbl.meta['FILENAME']
     return '_sts_e' in name
 
-def printrange(spectbl, w0, w1):
+def getrange(spectbl, w0, w1):
     keep = (spectbl['w1'] > w0) & (spectbl['w0'] < w1)
-    print spectbl[keep]
+    return spectbl[keep]
+
+def exportrange(spectbl, w0, w1, folder, overwrite=False):
+    piece = getrange(spectbl, w0, w1)
+    name = path.basename(spectbl.meta['FILENAME'])
+    name = name.split('.')[0]
+    name += '_waverange {}-{}.fits'.format(w0,w1)
+    name = path.join(folder, name)
+    io.writefits(piece, name, overwrite=overwrite)
 
 def clooge_edges(mids):
     """Just uses the midpoints of the midpoints to guess at the edges for

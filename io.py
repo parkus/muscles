@@ -310,3 +310,27 @@ def __trimHSTtbl(spectbl):
         return spectbl[~bad]
     else:
         return spectbl
+
+def writeMAST(spectbl, name, overwrite=False):
+    """
+    Writes spectbls to a standardized MUSCLES FITS file format that also
+    includes all the keywords required for the archive.
+
+    Parameters
+    ----------
+    spectbl : astropy table in MUSCLES format
+        The spectrum to be written to a MSUCLES FITS file.
+    name : str
+        filename for the FITS output
+    overwrite : {True|False}
+        whether to overwrite if output file already exists
+
+    Returns
+    -------
+    None
+    """
+
+    writefits(spectbl, name, overwrite=overwrite)
+
+    with fits.open(name) as hdus:
+        h0, h1, h2 = hdus

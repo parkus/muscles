@@ -7,7 +7,7 @@ Created on Fri Nov 07 15:51:54 2014
 import os
 from astropy.io import fits
 from pandas import read_pickle
-from mypy.my_numpy import midpts
+from mypy.my_numpy import midpts, inranges
 import numpy as np
 import io, settings
 from itertools import product as iterproduct
@@ -22,6 +22,8 @@ root = gdrive + '/Grad School/Phd Work/MUSCLES'
 local = '/Users/rolo7566/Datasets/MUSCLES'
 datapath = local + '/data'
 productspath = local + '/products'
+
+target_list = root + '/target_list.txt'
 
 bandmap = {'u':'uv', 'x':'x-ray', 'v':'visible', 'r':'ir'}
 
@@ -180,11 +182,33 @@ def configfiles(star, configstring):
     allfiles = allspecfiles(star)
     return filter(lambda f: configstring in f, allfiles)
 
+def choosesourcespecs(specfiles):
+    """Given a list of specfiles, select the best out of duplicated files and
+    remove custom coadds and extractions."""
+    #get rid of reduced files
+    specfiles = filter(lambda s: not ('coadd' in s or 'custom' in s), specfiles)
+
+    #remove any non-spec files
+    specfiles = filter(isspec, specfiles)
+
+    #for x1dsum files, get rid of any x1ds included in the x1dsum
+    xsums = filter(lambda s: 'x1dsum' in s, specfiles)
+    x1ds = filter(lambda s: 'x1d.fits' in s, specfiles)
+    if len(xsums) > 0:
+        hdrs = [fits.getheader(xs, 1) for xs in xsums]
+        rngs = [[h['expstart'], h['expend']] for h in hdrs]
+        rngs = sorted(rngs)
+        def covered(x1d):
+            start = fits.getval(x1d, 'expstart', 1)
+            return inranges(start, rngs, [1,1])
+        badx1ds = filter(covered, x1ds)
+        for bx in badx1ds: specfiles.remove(bx)
+
+    return specfiles
+
 def sourcespecfiles(star, configstring):
     """Source (not coadd or custom) spectrum files that conatin configstring."""
-    allfiles = allsourcefiles(star)
-    f = filter(lambda f: configstring in f, allfiles)
-    return f
+    return choosesourcespecs(configfiles(star, configstring))
 
 def coaddfile(star, configstring):
     """The coadd file for a config and star."""
@@ -204,10 +228,11 @@ def customfile(star, configstring):
     else:
         return f[0]
 
+isspec = lambda name: any([s in name for s in settings.specstrings])
+
 def allspecfiles(star):
     """Find all the spectra for the star within the subdirectories of path
     using the file naming convention."""
-    isspec = lambda name: any([s in name for s in settings.specstrings])
     hasstar = lambda name: star in name
 
     subfolders = [datapath]
@@ -225,17 +250,23 @@ def allspecfiles(star):
     return files
 
 def allsourcefiles(star):
-    """All source spectrum files for a star (not coadd or custom)."""
+    """All source spectrum files for a star."""
     allfiles = allspecfiles(star)
-    return filter(lambda s: not ('coadd' in s or 'custom' in s), allfiles)
+    return choosesourcespecs(allfiles)
 
-def specfilegroups(star, nosingles=False):
-    """Return a list of groups of files from the same instrument."""
+def coaddgroups(star, config=None, nosingles=False):
+    """Return a list of groups of files that should be coadded.
+    Chooses the best source files and avoids dulicates."""
     allfiles = allsourcefiles(star)
     filterfiles = lambda s: filter(lambda ss: s in ss, allfiles)
+    if config:
+        files = filterfiles(config)
     files = map(filterfiles, settings.instruments)
+    files = filter(len, files)
     if nosingles:
         files = filter(lambda x: len(x) > 1, files)
+    if config:
+        files = files[0]
     return files
 
 def panfiles(star):

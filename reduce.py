@@ -22,6 +22,17 @@ colnames = settings.spectbl_format['colnames']
 
 def theworks(star, R=10000.0, dw=1.0):
 
+    if np.isnan(db.props['Teff'][star]):
+        raise ValueError("Fool! You haven't entered Teff, etc. for {} yet."
+                         "".format(star))
+
+    try:
+        settings.load(star)
+    except IOError:
+        warn("No settings file found for {}. Initializing one.".format(star))
+        sets = settings.StarSettings(star)
+        sets.save()
+
     # interpolate and save phoenix spectrum
     auto_phxspec(star)
 
@@ -160,7 +171,7 @@ def normalize(spectbla, spectblb, flagmask=False):
     normspec['normfac'] = normfac
     return normspec
 
-def smartsplice(spectbla, spectblb, minsplice=0.01):
+def smartsplice(spectbla, spectblb, minsplice=0.05):
     """
     Splice one spectrum into another (presumably overlapping) spectrum in a
     way that minimizes overall error.
@@ -267,37 +278,39 @@ def smartsplice(spectbla, spectblb, minsplice=0.01):
         i, j = i[keep], j[keep]
         i, j = map(np.append, [i, j], [0, 0])
 
-        signal = cf0[i] + (cf1[j] - cf1[i]) + (cf0[-1] - cf0[j])
+#        signal = cf0[i] + (cf1[j] - cf1[i]) + (cf0[-1] - cf0[j])
         var = cv0[i] + (cv1[j] - cv1[i]) + (cv0[-1] - cv0[j])
-        SN = signal/np.sqrt(var)
+#        SN = signal/np.sqrt(var)
 
         #pick the best and splice the spectra
-        best = np.nanargmax(SN)
+#        best = np.nanargmax(SN)
+        best = np.nanargmin(var)
         i, j = i[best], j[best]
-        left, right = we[i], we[j]
+        cut0, cut1 = we[i], we[j]
         if i == j:
             return spec0
-        if left in we0:
-            left = spec0[spec0['w1'] <= left]
+        if cut0 in we0:
+            left = spec0[spec0['w1'] <= cut0]
             spec = splice(spec1, left)
         else:
-            right = spec1[spec1['w0'] >= left]
+            right = spec1[spec1['w0'] >= cut0]
             spec = splice(spec0, right)
-        if right in we0:
-            right = spec0[spec0['w0'] >= right]
+        if cut1 in we0:
+            right = spec0[spec0['w0'] >= cut1]
             spec = splice(spec, right)
         else:
-            left = spec[spec['w1'] <= right]
+            left = spec[spec['w1'] <= cut1]
             spec = splice(spec0, left)
 
     #do the same, if not enclosed
     else:
         i = range(len(we))
-        signal = cf0[i] + (cf1[-1] - cf1[i])
+#        signal = cf0[i] + (cf1[-1] - cf1[i])
         var = cv0[i] + (cv1[-1] - cv1[i])
-        SN = signal/np.sqrt(var)
+#        SN = signal/np.sqrt(var)
 
-        best = np.nanargmax(SN)
+#        best = np.nanargmax(SN)
+        best = np.nanargmin(var)
         i = i[best]
         cut = we[best]
         if cut in we0:
@@ -375,8 +388,8 @@ def cullrange(spectbl, wrange):
     keep = in0 & in1
     return spectbl[~keep]
 
-def keepranges(spectbl, wranges):
-    in0, in1 = [mnp.inranges(spectbl[s], wranges) for s in ['w0', 'w1']]
+def keepranges(spectbl, wrange):
+    in0, in1 = [mnp.inranges(spectbl[s], wrange) for s in ['w0', 'w1']]
     keep = in0 & in1
     return spectbl[keep]
 
@@ -441,7 +454,8 @@ def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime'):
     data = [v[goodbins] for v in [cw0,cw1,cf,ce,cexpt,dq,cinst,cnorm,cstart,cend]]
     spectbl = utils.list2spectbl(data, star, None, sourcefiles)
 
-    assert np.all(spectbl['instrument'] > 0)
+    if all([np.all(s['instrument'] > 0) for s in spectbls]):
+        assert np.all(spectbl['instrument'] > 0)
     assert not np.any(spectbl['minobsdate'] < 0)
     if np.all(spectbl['minobsdate'] > 0):
         assert np.all(spectbl['maxobsdate'] > spectbl['minobsdate'])
@@ -456,12 +470,13 @@ def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime'):
 
 def auto_coadd(star, configs=None):
     if configs is None:
-        groups = db.specfilegroups(star)
+        groups = db.coaddgroups(star)
     else:
         if type(configs) is str: configs = [configs]
         groups = [db.sourcespecfiles(star, config) for config in configs]
 
     for group in groups:
+        if len(group) == 1 and 'x1dsum' in group: continue
         echelles = map(utils.isechelle, group)
         weights = 'error' if any(echelles) else 'exptime'
         spectbls = sum(map(io.read, group), [])

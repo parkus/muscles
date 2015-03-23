@@ -40,7 +40,7 @@ prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m']
 
 lyacut = [1208.0, 1222.0]
 
-specstrings = ['_x1d', 'mod_euv', 'mod_lya', 'spec', 'sx1', 'mod_phx', 'coadd']
+specstrings = ['x1d', 'mod_euv', 'mod_lya', 'spec', 'sx1', 'mod_phx', 'coadd']
 #listed in normalization order
 instruments = ['hst_cos_g130m','hst_cos_g160m','hst_cos_g230l','hst_sts_g230l',
                'hst_sts_e230m','hst_sts_e230h','hst_sts_e140m','hst_sts_g430l',
@@ -54,6 +54,12 @@ def getinsti(instrument):
         return instvals[instruments.index(instrument)]
     except ValueError:
         return -99
+
+def MASTlabels(name):
+    """
+    Return the MAST telescop and instrume values given a filename.
+    """
+    pass
 
 foldersbyband = {'u':'uv', 'v':'visible', 'r':'ir', 'x':'x-ray'}
 
@@ -79,7 +85,7 @@ class StarSettings:
         self.custom_extractions.append(d)
 
     def add_custom_range(self, config, ranges):
-        """Add good wavelength ranges for a spectrum as an Nx2 list."""
+        """Add good wavelength range for a spectrum."""
         self.custom_ranges['configs'].append(config)
         self.custom_ranges['ranges'].append(ranges)
 
