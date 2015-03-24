@@ -23,12 +23,16 @@ def isechelle(str_or_spectbl):
         name = str_or_spectbl.meta['FILENAME']
     return '_sts_e' in name
 
-def getrange(spectbl, w0, w1):
-    keep = (spectbl['w1'] > w0) & (spectbl['w0'] < w1)
+def keepranges(spectbl, *args):
+    """Returns a table with only bins that are fully within the wavelength
+    ranges. *args can either be a Nx2 array of ranges or w0, w1."""
+    wrange = args[0] if len(args) == 1 else args
+    in0, in1 = [mnp.inranges(spectbl[s], wrange) for s in ['w0', 'w1']]
+    keep = in0 & in1
     return spectbl[keep]
 
 def exportrange(spectbl, w0, w1, folder, overwrite=False):
-    piece = getrange(spectbl, w0, w1)
+    piece = keepranges(spectbl, w0, w1)
     name = path.basename(spectbl.meta['FILENAME'])
     name = name.split('.')[0]
     name += '_waverange {}-{}.fits'.format(w0,w1)

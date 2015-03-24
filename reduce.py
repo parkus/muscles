@@ -72,7 +72,7 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True):
         name = specs[i].meta['FILENAME']
         goodranges = sets.get_custom_range(name)
         if goodranges is not None:
-            specs[i] = keepranges(specs[i], goodranges)
+            specs[i] = utils.keepranges(specs[i], goodranges)
 
     #normalize and splice according to input order
     spec = specs.pop(0)
@@ -387,11 +387,6 @@ def cullrange(spectbl, wrange):
     in0, in1 = [mnp.inranges(spectbl[s], wrange) for s in ['w0', 'w1']]
     keep = in0 & in1
     return spectbl[~keep]
-
-def keepranges(spectbl, wrange):
-    in0, in1 = [mnp.inranges(spectbl[s], wrange) for s in ['w0', 'w1']]
-    keep = in0 & in1
-    return spectbl[keep]
 
 def powerbin(spectbl, R=1000.0, lowlim=1.0):
     """
