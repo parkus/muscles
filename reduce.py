@@ -388,7 +388,7 @@ def cullrange(spectbl, wrange):
     keep = in0 & in1
     return spectbl[~keep]
 
-def powerbin(spectbl, R=1000.0, lowlim=1.0):
+def powerbin(spectbl, R=1000.0, lo=1.0, hi=None):
     """
     Rebin a spectrum onto a grid with constant resolving power.
 
@@ -396,8 +396,8 @@ def powerbin(spectbl, R=1000.0, lowlim=1.0):
     within the original wavelength range, the remainder will be discarded.
     """
     start = spectbl['w0'][0]
-    if start < lowlim: start = lowlim
-    end = spectbl['w1'][-1]
+    if start < lo: start = lo
+    end = spectbl['w1'][-1] if hi is None else hi
     fac = (2.0*R + 1.0)/(2.0*R - 1.0)
     maxpow = ceil(log10(end/start)/log10(fac))
     powers = np.arange(maxpow)
@@ -405,8 +405,10 @@ def powerbin(spectbl, R=1000.0, lowlim=1.0):
     wbins = utils.edges2bins(we)
     return rebin(spectbl, wbins)
 
-def evenbin(spectbl, dw):
-    newedges = np.arange(np.min(spectbl['w0']), np.max(spectbl['w1']), dw)
+def evenbin(spectbl, dw, lo=None, hi=None):
+    if lo is None: lo = np.min(spectbl['w0'])
+    if hi is None: hi = np.max(spectbl['w1'])
+    newedges = np.arange(lo, hi, dw)
     newbins = utils.edges2bins(newedges)
     return rebin(spectbl, newbins)
 
@@ -471,7 +473,7 @@ def auto_coadd(star, configs=None):
         groups = [db.sourcespecfiles(star, config) for config in configs]
 
     for group in groups:
-        if len(group) == 1 and 'x1dsum' in group: continue
+        if len(group) == 1 and not utils.isechelle(group): continue
         echelles = map(utils.isechelle, group)
         weights = 'error' if any(echelles) else 'exptime'
         spectbls = sum(map(io.read, group), [])

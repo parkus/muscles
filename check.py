@@ -33,7 +33,7 @@ def cyclespec(files):
         plt.show()
     plt.ion()
 
-def HSTcountregions(specfile):
+def HSTcountregions(specfile, scale='auto'):
     """
     Show where the spectrum was extracted in a 2d histogram of counts created
     from the tag or corrtag file of the same name.
@@ -45,7 +45,7 @@ def HSTcountregions(specfile):
         td = fits.getdata(tagfile, 1)
 
         #make image
-        __cnts2img(td['axis1'], td['axis2'])
+        __cnts2img(td['axis1'], td['axis2'], scale)
 
         #get extraction region dimensions
         args = __stsribbons(specfile)
@@ -65,7 +65,7 @@ def HSTcountregions(specfile):
 
             #create image
             plt.figure()
-            __cnts2img(td['xcorr'], td['ycorr'])
+            __cnts2img(td['xcorr'], td['ycorr'], scale)
 
             #get extraction region dimensions
             args = __cosribbons(specfile, seg)
@@ -216,11 +216,11 @@ def __stsribbons(specfile):
                     ['extrsize', 'bk1size','bk2size']]
     return [smid, shgt, b1mid, b1hgt, b2mid, b2hgt, N]
 
-def __cnts2img(x,y):
+def __cnts2img(x,y, scalefunc):
     minx, maxx = floor(np.min(x)), ceil(np.max(x))
     miny, maxy = floor(np.min(y)), ceil(np.max(y))
     xbins, ybins = np.arange(minx, maxx+1), np.arange(miny, maxy+1)
-    image(x, y, bins=[xbins, ybins], scalefunc='auto', cmap='Greys')
+    image(x, y, bins=[xbins, ybins], scalefunc=scalefunc, cmap='Greys')
 
 def __plotribbons(smid, shgt, b1mid, b1hgt, b2mid, b2hgt, x):
         triplets = [[smid, shgt, 'g'], [b1mid, b1hgt, 'r'], [b2mid, b2hgt, 'r']]

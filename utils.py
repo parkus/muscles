@@ -16,6 +16,23 @@ keys = ['units', 'dtypes', 'fmts', 'descriptions', 'colnames']
 spectbl_format = [settings.spectbl_format[key] for key in keys]
 units, dtypes, fmts, descriptions, colnames = spectbl_format
 
+def flux_integral(spectbl):
+    """Compute integral of flux from spectbl values. Result will be in erg/s/cm2."""
+    dw = spectbl['w1'] - spectbl['w0']
+    return np.sum(spectbl['flux'] * dw)
+
+def bol2sol(a):
+    """Convert bolometric-normalized fluxes to Earth-equivalent fluxes."""
+    return a*1363100
+
+def add_normflux(spectbl):
+    """Add columns to the spectbl that are the bolometric-normalized flux and
+    associated error."""
+    normfac = flux_integral(spectbl)
+    spectbl['normflux'] = spectbl['flux']/normfac
+    spectbl['normerr'] = spectbl['error']/normfac
+    return spectbl
+
 def isechelle(str_or_spectbl):
     if type(str_or_spectbl) is str:
         name = str_or_spectbl

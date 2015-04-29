@@ -274,7 +274,7 @@ def panfiles(star):
     replacing "raw" files with coadds and custom extractions as appropriate
     and ordering according to how the spectra should be normalized."""
 
-    allfiles = allspecfiles(star)
+    allfiles = allsourcefiles(star)
     use = lambda name: any([s in name for s in settings.instruments])
     allfiles = filter(use, allfiles)
     filterfiles = lambda s: filter(lambda ss: s in ss, allfiles)
@@ -327,18 +327,18 @@ def allpans(star):
 
 def panpath(star):
     """The native resolution panspec file for a star."""
-    name = '-_msl_pan_-----_{}_panspec_native_resolution.fits'.format(star)
+    name = 'p_msl_pan_-----_{}_panspec_native_resolution.fits'.format(star)
     return os.path.join(productspath, name)
 
 def Rpanpath(star, R):
     """The constant R panspec file for a star."""
-    name = ('-_msl_pan_-----_{}_panspec_constant_R={:d}.fits'
+    name = ('p_msl_pan_-----_{}_panspec_constant_R={:d}.fits'
             ''.format(star, int(round(R))))
     return os.path.join(productspath, name)
 
 def dpanpath(star, dR):
     """The constant resolution (binsize) panspec file for a star."""
-    name = ('-_msl_pan_-----_{}_panspec_constant_dR={:.1f} angstrom.fits'
+    name = ('p_msl_pan_-----_{}_panspec_constant_dR={:.1f} angstrom.fits'
             ''.format(star, float(dR)))
     return os.path.join(productspath, name)
 
