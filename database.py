@@ -6,6 +6,7 @@ Created on Fri Nov 07 15:51:54 2014
 """
 import os
 from astropy.io import fits
+from astropy.table import Table
 from pandas import read_pickle
 from mypy.my_numpy import midpts, inranges
 import numpy as np
@@ -107,6 +108,9 @@ proprefs = read_pickle(refpath)
 properrspos =read_pickle(errpospath)
 properrsneg = read_pickle(errnegpath)
 
+proptables = [props, proprefs, properrspos, properrsneg]
+proppaths = [proppath, refpath, errpospath, errnegpath]
+
 stars = list(props.index)
 
 def __setormask(tbl, path, star, prop, value):
@@ -139,10 +143,23 @@ def phxinput(star):
             kwds[key] = x
     return Teff, kwds
 
+def props2csv(folder):
+    for tbl, path in zip(proptables, proppaths):
+        path = os.path.basename(path)
+        csvpath = path.replace('.p', '.csv')
+        csvpath = os.path.join(folder, csvpath)
+        tbl.to_csv(csvpath)
+
+# -----------------------------------------------------------------------------
+# AIRGLOW LINES
+
+airglow_path = os.path.join(root, 'airglow_lines.csv')
+airglow_lines = Table.read(airglow_path)
+
 # -----------------------------------------------------------------------------
 # SPECTRAL DATA ORGANIZATION
 
-def findfiles(path_or_band, substrings):
+def findfiles(path_or_band, *substrings):
     """Look for a files in directory at path that contains ALL of the strings
     in substrings in its filename."""
     if not os.path.exists(path_or_band):
@@ -173,7 +190,7 @@ def findsimilar(specfile, newstring):
     u_hst_cos_g130m_gj832 observation."""
     base = parse_id(specfile)
     dirname = os.path.dirname(specfile)
-    names = findfiles(dirname, [base, newstring])
+    names = findfiles(dirname, base, newstring)
     paths = [os.path.join(dirname, n) for n in names]
     return paths
 
@@ -285,6 +302,10 @@ def panfiles(star):
     files = sub_coaddfiles(files)
     files = sub_customfiles(files)
 
+    # parse out phoenix file
+    phxfile = filter(lambda f: 'phx' in f, files)[0]
+    files.remove(phxfile)
+
     #parse out lya file
     lyafile = filter(lambda f: settings.instruments[13] in f, files)
     assert len(lyafile) <= 1
@@ -294,7 +315,7 @@ def panfiles(star):
     else:
         lyafile = None
 
-    return files, lyafile
+    return files, phxfile, lyafile
 
 def parse_info(filename, start, stop):
     """Parse out the standard information bits from a muscles filename."""
