@@ -17,10 +17,12 @@ from spectralPhoton.hst.convenience import x2dspec
 from itertools import combinations_with_replacement as combos
 from scipy.stats import norm
 from warnings import warn
+from os.path import basename
 
 colnames = settings.spectbl_format['colnames']
+airglow_wavelengths = db.airglow_lines['wavelength'].data
 
-def theworks(star, R=10000.0, dw=1.0):
+def theworks(star, R=10000.0, dw=1.0, silent=False):
 
     if np.isnan(db.props['Teff'][star]):
         raise ValueError("Fool! You haven't entered Teff, etc. for {} yet."
@@ -34,18 +36,22 @@ def theworks(star, R=10000.0, dw=1.0):
         sets.save()
 
     # interpolate and save phoenix spectrum
+    if not silent: print 'interpolating phoenix spectrum'
     auto_phxspec(star)
 
     # make custom extractions
+    if not silent: print 'performing any custom extractions'
     auto_customspec(star)
 
     # coadd spectra
+    if not silent: print 'coadding spectra'
     auto_coadd(star)
 
     # make panspectrum
+    if not silent: print 'stitching spectra together'
     panspectrum(star, R=R, dw=dw) #panspec and Rspec
 
-def panspectrum(star, R=10000.0, dw=1.0, savespecs=True):
+def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, silent=False):
     """
     Coadd and splice the provided spectra into one panchromatic spectrum
     sampled at the native resolutions and constant R.
@@ -54,7 +60,7 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True):
     listed in order of descending quality.
     """
     sets = settings.load(star)
-    files, lyafile = db.panfiles(star)
+    files, phxfile, lyafile = db.panfiles(star)
     specs = io.read(files)
 
     #make sure all spectra are of the same star
@@ -69,20 +75,48 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True):
 
     #carry out custom trims according to user-defined settings
     for i in range(len(specs)):
-        name = specs[i].meta['FILENAME']
+        name = specs[i].meta['NAME']
         goodranges = sets.get_custom_range(name)
         if goodranges is not None:
+            if not silent:
+                print ('trimming spectra in {} to the ranges {}, bcuz you '
+                       'siad to'.format(name, goodranges))
             specs[i] = utils.keepranges(specs[i], goodranges)
 
     #normalize and splice according to input order
     spec = specs.pop(0)
     while len(specs):
         addspec = specs.pop(0)
+        f = files.pop(0)
+        specrange = [addspec['w0'][0], addspec['w1'][-1]]
+
+        if not silent:
+            print 'splicing in {}, {:.1f}-{:.1f}'.format(f, *specrange)
+
+        if 'sts' not in f:
+            if not silent: print '\tremoving airglow lines'
+            relevant = mnp.inranges(airglow_wavelengths, specrange)
+            rmv = lambda spec, line: remove_line(spec, line, silent=silent)
+            addspec = reduce(rmv, airglow_wavelengths[relevant], addspec)
+        else:
+            if not silent: print '\tSTIS spectrum, no airglow removal'
+
         overlap = utils.overlapping(spec, addspec)
         normit = not settings.dontnormalize(addspec)
+        if not overlap and not silent:
+            print '\tno overlap, so won\'t normalize'
+        if not normit and not silent:
+            print '\twon\'t normalize, cuz you said not to'
         if overlap and normit:
-            addspec = normalize(spec, addspec)
-        spec = smartsplice(spec, addspec)
+            if not silent:
+                print '\tnormalizing within the overlap'
+            addspec = normalize(spec, addspec, silent=silent)
+
+        spec = smartsplice(spec, addspec, silent=silent)
+
+    # TODO fill gaps
+
+    # TODO add phoenix model
 
     #replace lya portion with model
     if lyafile:
@@ -102,7 +136,7 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True):
 
     return spec,Rspec,dspec
 
-def normalize(spectbla, spectblb, flagmask=False):
+def normalize(spectbla, spectblb, flagmask=False, silent=False):
     """
     Normalize the spectrum b to spectrum a.
 
@@ -118,11 +152,17 @@ def normalize(spectbla, spectblb, flagmask=False):
     according to the error in the normalization factor.
     """
 
+    if not silent:
+        names = [s.meta['NAME'] for s in [spectbla, spectblb]]
+
     #parse out the overlap
     overa, overb = utils.argoverlap(spectbla, spectblb, 'tight')
 
     #if speca has all zero errors (it's a model), don't normalize to it
     if np.all(spectbla[overa]['error'] == 0.0):
+        if not silent:
+            print ('the master spectrum {} has all zero errors, so {} will '
+                   'not be normalized to it'.format(*names))
         return spectblb
 
     #rebin to the coarser spectrum
@@ -130,20 +170,36 @@ def normalize(spectbla, spectblb, flagmask=False):
         ospeca = spectbla[overa]
         wbins = utils.wbins(ospeca)
         ospecb = rebin(spectblb, wbins)
+        order = slice(step=-1)
     else:
         ospecb = spectblb[overb]
         wbins = utils.wbins(ospecb)
         ospeca = rebin(spectbla, wbins)
+        order = slice(step=1)
+    if not silent:
+        over_range = [ospeca['w0'][0], ospeca['w1'][-1]]
+        print ('spectra overlap at {:.2f}-{:.2f}'.format(*over_range))
+        print ('rebinning {} to the (coarser) resolution of {} where they'
+               'overlap'.format(*names[order]))
 
     #mask data with flags
     mask = np.zeros(len(ospeca), bool)
     if flagmask:
         flagged = (ospeca['flags'] > 0) | (ospecb['flags'] > 0)
         mask[flagged] = True
+        if not silent:
+            percent_flagged = np.sum(flagged) / float(len(ospeca)) * 100.0
+            print ('{:.2f}% of the data that was flagged in one spectra or '
+                   'the other. masking it out.'.format(percent_flagged))
 
     #mask data where speca has 0.0 errors
     zeroerr = (ospeca['error'] == 0.0)
     mask[zeroerr] = True
+    if not silent:
+        percent_zeroerr = np.sum(zeroerr) / float(len(ospeca)) * 100.0
+        print ('{:.2f}% of the data in the master spectrum had zero error.'
+               'masking it out'.format(percent_zeroerr))
+
     good = ~mask
 
     #compute normalization factor
@@ -154,14 +210,26 @@ def normalize(spectbla, spectblb, flagmask=False):
         error = mnp.quadsum(spec['error'][good]*dw[good])
         return area, error
     areas, errors = zip(*map(getarea, ospecs))
+    if not silent:
+        print ('master spectrum has overlap area    {} ({})'
+               'secondary spectrum has overlap area {} ({})'
+               ''.format(*zip(areas, errors)))
     diff = abs(areas[1] - areas[0])
     differr = mnp.quadsum(errors)
     p = 2.0 * (1.0 - norm.cdf(diff, loc=0.0, scale=differr))
+    if not silent:
+        print ('the difference is {} ({}), giving a probability {:.4f} that'
+               'the difference is spurious'.format(diff, differr, p))
     if p > 0.05:
+        if not silent:
+            print 'secondary will not be normalized to master'
         return spectblb
     normfac = areas[0]/areas[1]
     normfacerr = sqrt((errors[0]/areas[1])**2 +
                       (areas[0]*errors[1]/areas[1]**2)**2)
+    if not silent:
+        print ('secondary will be normalized by a factor of {} ({})'
+               ''.format(normfac, normfacerr))
 
     normspec = Table(spectblb, copy=True)
     nze = (normspec['error'] != 0.0)
@@ -171,7 +239,7 @@ def normalize(spectbla, spectblb, flagmask=False):
     normspec['normfac'] = normfac
     return normspec
 
-def smartsplice(spectbla, spectblb, minsplice=0.05):
+def smartsplice(spectbla, spectblb, minsplice=0.05, silent=False):
     """
     Splice one spectrum into another (presumably overlapping) spectrum in a
     way that minimizes overall error.
@@ -202,6 +270,8 @@ def smartsplice(spectbla, spectblb, minsplice=0.05):
     key = lambda s: s['w0'][0]
     both.sort(key=key)
     spec0, spec1 = both
+    if not silent:
+        names = [s.meta['NAME'] for s in both]
 
     if not utils.overlapping(*both): #they don't overlap
         return utils.vstack(both)
@@ -301,6 +371,9 @@ def smartsplice(spectbla, spectblb, minsplice=0.05):
         else:
             left = spec[spec['w1'] <= cut1]
             spec = splice(spec0, left)
+        if not silent:
+            print ('spectrum {} spliced into {} from {:.2f} to {:.2f}'
+                   ''.format(names[1], names[0], cut0, cut1))
 
     #do the same, if not enclosed
     else:
@@ -319,6 +392,9 @@ def smartsplice(spectbla, spectblb, minsplice=0.05):
         else:
             right = spec1[spec1['w0'] >= cut]
             spec = splice(spec0, right)
+        if not silent:
+            print ('spectrum {} spliced into {} from {:.2f} onward'
+                   ''.format(names[1], names[0], cut))
 
     return spec
 
@@ -412,7 +488,8 @@ def evenbin(spectbl, dw, lo=None, hi=None):
     newbins = utils.edges2bins(newedges)
     return rebin(spectbl, newbins)
 
-def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime'):
+def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime',
+          silent=False):
     """Coadd spectra in spectbls. weights can be 'exptime' or 'error'"""
     inst = __same_instrument(spectbls)
     star = __same_star(spectbls)
@@ -463,9 +540,10 @@ def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime'):
         cfile = db.coaddpath(sourcefiles[0])
         io.writefits(spectbl, cfile, overwrite=True)
         spectbl.meta['FILENAME'] = cfile
+        if not silent: print 'coadd saved to \n\t{}'.format(cfile)
     return spectbl
 
-def auto_coadd(star, configs=None):
+def auto_coadd(star, configs=None, silent=False):
     if configs is None:
         groups = db.coaddgroups(star)
     else:
@@ -473,12 +551,24 @@ def auto_coadd(star, configs=None):
         groups = [db.sourcespecfiles(star, config) for config in configs]
 
     for group in groups:
-        if len(group) == 1 and not utils.isechelle(group): continue
+        if len(group) == 1 and not utils.isechelle(group):
+            if not silent:
+                print 'single file for {}, moving on'.format(basename(group[0]))
+            continue
+        if not silent:
+            print 'coadding the files \n\t{}'.format('\n\t'.join(group))
         echelles = map(utils.isechelle, group)
-        weights = 'error' if any(echelles) else 'exptime'
+        if any(echelles):
+            weights = 'error'
+            if not silent:
+                print 'all files are echelles, so weighting by 1/error**2'
+        else:
+            weights = 'exptime'
+            if not silent:
+                print 'weighting by exposure time'
         spectbls = sum(map(io.read, group), [])
         if len(spectbls) > 1:
-            coadd(spectbls, savefits=True, weights=weights)
+            coadd(spectbls, savefits=True, weights=weights, silent=silent)
 
 def phxspec(Teff, logg=4.5, FeH=0.0, aM=0.0, repo=db.phxrepo):
     """
@@ -508,19 +598,29 @@ def phxspec(Teff, logg=4.5, FeH=0.0, aM=0.0, repo=db.phxrepo):
             normfac, start, end]
     return utils.list2spectbl(data, '', '')
 
-def auto_phxspec(star):
+def auto_phxspec(star, silent=False):
     Teff, kwds = db.phxinput(star)
+    if not silent:
+        print 'interpolating phoenix spectrum for {} with values'.format(star)
+        kwds2 = dict(Teff=Teff, **kwds)
+        print kwds2
     spec = phxspec(Teff, **kwds)
     spec.meta['STAR'] = star
     path = db.phxpath(star)
+    if not silent:
+        print 'writing spectrum to {}'.format(path)
     io.writefits(spec, path, overwrite=True)
 
-def auto_customspec(star, specfiles=None):
+def auto_customspec(star, specfiles=None, silent=False):
     if specfiles is None:
         specfiles = db.allspecfiles(star)
     ss = settings.load(star)
     for custom in ss.custom_extractions:
         config = custom['config']
+        if not silent:
+            print 'custom extracting spectrum for {}'.format(config)
+            print 'with parameters'
+            print custom['kwds']
         if 'hst' in config:
             x1dfile = db.sourcespecfiles(star, config)
             if len(x1dfile) > 1:
@@ -528,6 +628,8 @@ def auto_customspec(star, specfiles=None):
             else:
                 x1dfile = x1dfile[0]
             x2dfile = x1dfile.replace('x1d','x2d')
+            if not silent:
+                print 'using x2dfile {}'.format(x2dfile)
             specfile = x1dfile.replace('x1d', 'custom_spec')
             dqmask = settings.seriousdqs(specfile)
             spec = x2dspec(x2dfile, x1dfile=x1dfile, bkmask=dqmask,
@@ -546,6 +648,8 @@ def auto_customspec(star, specfiles=None):
             datalist.extend([expt, spec['dq'], inst, norm, start, end])
 
             spectbl = utils.list2spectbl(datalist, star, '', [x2dfile])
+            if not silent:
+                 print 'saving custom extraction to {}'.format(specfile)
             io.writefits(spectbl, specfile, overwrite=True)
         else:
             raise NotImplementedError("No custom extractions defined for {}"
@@ -586,10 +690,47 @@ def rebin(spec, newbins):
     expt = mnp.rebin(newedges, oldedges, spec['exptime'], 'avg')
 
     #spectbl accoutrments
-    star, fn, sf = [spec.meta[s] for s in ['STAR', 'FILENAME', 'SOURCEFILES']]
+    star, name, fn, sf = [spec.meta[s] for s in
+                          ['STAR','NAME', 'FILENAME', 'SOURCEFILES']]
 
     return utils.vecs2spectbl(w0, w1, flux, error, expt, flags, insts, normfac,
-                              start, end, star, fn, sf)
+                              start, end, star, name, fn, sf)
+
+def remove_line(spec, wavelength, silent=False):
+    """
+    Remove a line from a spectrum by automatically identifying its extent and
+    clipping it out.
+    """
+    w = wavelength
+
+    # clip spectrum down to just a window around the line for fast processing
+    width = w * 0.05
+    window = [w - width / 2.0, w + width / 2.0]
+    minispec = utils.keepranges(spec, window)
+
+    # identify lines vs continuum in spectrum
+    wbins = utils.wbins(minispec)
+    flags = specutils.split(wbins, minispec['flux'], minispec['error'])
+
+    # isolate range of emission feature that includes wavelength
+    line_ranges = specutils.flags2ranges(wbins, flags == 1)
+    inrange = (w <= line_ranges[:, 1]) & (w >= line_ranges[:, 0])
+
+    # if an emission feature does include it
+    if np.any(inrange):
+        # make a new spectrum excluding the range of that emission feature
+        bad_range = np.squeeze(line_ranges[inrange, :])
+        good_ranges = [[0.0, bad_range[0,]],
+                       [bad_range[1], np.inf]]
+        spec = utils.keepranges(spec, good_ranges)
+        if not silent:
+            print 'clipping out line in {:.2f}-{:.2f} AA'.format(*bad_range)
+    else:
+        if not silent:
+            print ('tried to remove line at {:.2f}, but no line was identfied'
+                   ''.format(w))
+
+    return spec
 
 def __inrange(spectbl, wr):
     in0, in1 = [mnp.inranges(spectbl[s], wr) for s in ['w0', 'w1']]
