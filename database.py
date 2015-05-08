@@ -302,10 +302,6 @@ def panfiles(star):
     files = sub_coaddfiles(files)
     files = sub_customfiles(files)
 
-    # parse out phoenix file
-    phxfile = filter(lambda f: 'phx' in f, files)[0]
-    files.remove(phxfile)
-
     #parse out lya file
     lyafile = filter(lambda f: settings.instruments[13] in f, files)
     assert len(lyafile) <= 1
@@ -315,7 +311,7 @@ def panfiles(star):
     else:
         lyafile = None
 
-    return files, phxfile, lyafile
+    return files, lyafile
 
 def parse_info(filename, start, stop):
     """Parse out the standard information bits from a muscles filename."""
