@@ -60,7 +60,7 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, silent=False):
     listed in order of descending quality.
     """
     sets = settings.load(star)
-    files, phxfile, lyafile = db.panfiles(star)
+    files, lyafile = db.panfiles(star)
     specs = io.read(files)
 
     #make sure all spectra are of the same star
@@ -96,7 +96,7 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, silent=False):
         if 'sts' not in f:
             if not silent: print '\tremoving airglow lines'
             relevant = mnp.inranges(airglow_wavelengths, specrange)
-            rmv = lambda spec, line: remove_line(spec, line, silent=silent)
+            rmv = lambda s, l: remove_line(s, l, fill_gap=4, silent=silent)
             addspec = reduce(rmv, airglow_wavelengths[relevant], addspec)
         else:
             if not silent: print '\tSTIS spectrum, no airglow removal'
@@ -113,10 +113,6 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, silent=False):
             addspec = normalize(spec, addspec, silent=silent)
 
         spec = smartsplice(spec, addspec, silent=silent)
-
-    # TODO fill gaps
-
-    # TODO add phoenix model
 
     #replace lya portion with model
     if lyafile:
@@ -696,10 +692,20 @@ def rebin(spec, newbins):
     return utils.vecs2spectbl(w0, w1, flux, error, expt, flags, insts, normfac,
                               start, end, star, name, fn, sf)
 
-def remove_line(spec, wavelength, silent=False):
+def remove_line(spec, wavelength, fill_gap=False, silent=False):
     """
     Remove a line from a spectrum by automatically identifying its extent and
     clipping it out.
+
+    Parameters
+    ----------
+    spec : muscles spectbl
+    wavelength : float
+        central wavelength of line
+    fill_gap : {False|int}
+        Whether to fill the resulting gap. If False, just return spectrum
+        with a gap. If an integer, fit a polynomial of that order and use
+        it to fill the gap.
     """
     w = wavelength
 
@@ -710,7 +716,8 @@ def remove_line(spec, wavelength, silent=False):
 
     # identify lines vs continuum in spectrum
     wbins = utils.wbins(minispec)
-    flags = specutils.split(wbins, minispec['flux'], minispec['error'])
+    flux, error = minispec['flux'], minispec['error']
+    flags = specutils.split(wbins, flux, error)
 
     # isolate range of emission feature that includes wavelength
     line_ranges = specutils.flags2ranges(wbins, flags == 1)
@@ -720,9 +727,7 @@ def remove_line(spec, wavelength, silent=False):
     if np.any(inrange):
         # make a new spectrum excluding the range of that emission feature
         bad_range = np.squeeze(line_ranges[inrange, :])
-        good_ranges = [[0.0, bad_range[0,]],
-                       [bad_range[1], np.inf]]
-        spec = utils.keepranges(spec, good_ranges)
+        gap = utils.argrange(spec, bad_range)
         if not silent:
             print 'clipping out line in {:.2f}-{:.2f} AA'.format(*bad_range)
     else:
@@ -730,7 +735,31 @@ def remove_line(spec, wavelength, silent=False):
             print ('tried to remove line at {:.2f}, but no line was identfied'
                    ''.format(w))
 
-    return spec
+    # fill the gap, if desired
+    if not fill_gap:
+        if not silent:
+            print 'leaving a gap where line was'
+            return spec[~gap]
+    else:
+        n = fill_gap
+        if not silent:
+            print 'filling the gap with an order {} polynomial'.format(n)
+
+        # fit polynomial to continuum
+        cont = (flags == 3)
+        poly = specutils.polyfit(wbins[cont, :], flux[cont], n, error[cont])[2]
+
+        # fill gap
+        spec = Table(spec, copy=True)
+        spec['flux'][gap] = poly(wbins[gap, :])[0]
+        spec['error'][gap] = 0.0
+        spec['instrument'][gap] = settings.getinsti('mod_gap_fill')
+        spec['exptime'][gap] = 0.0
+        spec['minobsdate'][gap] = 0.0
+        spec['maxobsdate'][gap] = 0.0
+        spec['normfac'][gap] = 1.0
+
+        return spec
 
 def __inrange(spectbl, wr):
     in0, in1 = [mnp.inranges(spectbl[s], wr) for s in ['w0', 'w1']]
