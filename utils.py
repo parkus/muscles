@@ -43,9 +43,7 @@ def isechelle(str_or_spectbl):
 def keepranges(spectbl, *args):
     """Returns a table with only bins that are fully within the wavelength
     ranges. *args can either be a Nx2 array of ranges or w0, w1."""
-    wrange = args[0] if len(args) == 1 else args
-    in0, in1 = [mnp.inranges(spectbl[s], wrange) for s in ['w0', 'w1']]
-    keep = in0 & in1
+    keep = argrange(spectbl, *args)
     return spectbl[keep]
 
 def exportrange(spectbl, w0, w1, folder, overwrite=False):
@@ -94,6 +92,7 @@ def vecs2spectbl(w0, w1, flux, err, exptime, flags, instrument, normfac,
     -------
     spectbl : MUSCLES spectrum (astropy) table
     """
+    #TODO: add new 'name' meta
     datalist = [w0, w1, flux, err, exptime, flags, instrument, normfac, start, end]
     return list2spectbl(datalist, star, filename, sourcefiles)
 
@@ -171,6 +170,12 @@ def argoverlap(spectbla, spectblb, method='tight'):
     bo = __getoverlap(ea, eb, igapsa, igapsb, method)
 
     return ao, bo
+
+def argrange(spectbl, *args):
+    """Return the boolean indices of the desired range. Inclusive."""
+    wrange = args[0] if len(args) == 1 else args
+    in0, in1 = [mnp.inranges(spectbl[s], wrange, [1, 1]) for s in ['w0', 'w1']]
+    return in0 & in1
 
 def __getoverlap(ea, eb, igapsa, igapsb, method):
     """Create boolean vector of overlap of b -- for use with argoverlap."""
