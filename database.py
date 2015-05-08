@@ -313,6 +313,18 @@ def panfiles(star):
 
     return files, lyafile
 
+def lyafile(star):
+    """Find the file with the best Lya data for star."""
+    files = findfiles('uv', star, 'sts', '140')
+    files = filter(isspec, files)
+    files = [os.path.join(datapath, 'uv', f) for f in files]
+    files = sub_customfiles(files)
+    files = sub_coaddfiles(files)
+    if len(files) > 1:
+        raise ValueError('More than one file found:\n' + '\n\t'.join(files))
+    else:
+        return os.path.basename(files[0])
+
 def parse_info(filename, start, stop):
     """Parse out the standard information bits from a muscles filename."""
     name = os.path.basename(filename)
