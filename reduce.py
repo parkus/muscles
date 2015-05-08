@@ -115,18 +115,29 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, silent=False):
         spec = smartsplice(spec, addspec, silent=silent)
 
     #replace lya portion with model
-    if lyafile:
-        lyaspec = io.read(lyafile)[0]
-        spec = cullrange(spec, settings.lyacut)
-        spec = smartsplice(spec, lyaspec)
+    if lyafile is None:
+        lyafile = db.lyafile(star)
+    if not silent:
+        print ('replacing section {:.1f}-{.1f} with data from {lf}'
+               ''.format(*settings.lyacut, lf=lf))
+    lyaspec = io.read(lyafile)[0]
+    lyaspec = utils.keepranges(lyaspec, settings.lyacut)
+    spec = splice(spec, lyaspec)
+#    spec = cullrange(spec, settings.lyacut)
+#    spec = smartsplice(spec, lyaspec)
 
-    #resample at constant R and dR
+    # resample at constant R and dR
+    if not silent:
+        print ('creating resampled panspecs at R = {:.0f} and dw = {.1f} AA'
+               ''.format(R, dw))
     Rspec = powerbin(spec, R)
     dspec = evenbin(spec, dw)
 
-    #save to fits
+    # save to fits
     if savespecs:
         paths = [db.panpath(star), db.Rpanpath(star, R), db.dpanpath(star, dw)]
+        if not silent:
+            print 'saving spectra to \n' + '\n\t'.join(paths)
         for s, path in zip([spec, Rspec, dspec], paths):
             io.writefits(s, path, overwrite=True)
 
