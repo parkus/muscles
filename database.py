@@ -346,6 +346,9 @@ def parse_observatory(filename):
     return parse_info(filename, 1, 2)
 def parse_paninfo(filename):
     return parse_info(filename, 6, None)
+def parse_name(filename):
+    name = os.path.basename(filename)
+    return name.split('.')[0]
 
 def allpans(star):
     """All panspec files for a star."""
