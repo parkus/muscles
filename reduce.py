@@ -692,7 +692,7 @@ def rebin(spec, newbins):
     return utils.vecs2spectbl(w0, w1, flux, error, expt, flags, insts, normfac,
                               start, end, star, name, fn, sf)
 
-def remove_line(spec, wavelength, fill_gap=False, silent=False):
+def remove_line(spec, wavelength, fill_with=None, silent=False):
     """
     Remove a line from a spectrum by automatically identifying its extent and
     clipping it out.
@@ -702,8 +702,8 @@ def remove_line(spec, wavelength, fill_gap=False, silent=False):
     spec : muscles spectbl
     wavelength : float
         central wavelength of line
-    fill_gap : {False|int}
-        Whether to fill the resulting gap. If False, just return spectrum
+    fill_gap : {None|int}
+        Whether to fill the resulting gap. If None, just return spectrum
         with a gap. If an integer, fit a polynomial of that order and use
         it to fill the gap.
     """
@@ -736,12 +736,12 @@ def remove_line(spec, wavelength, fill_gap=False, silent=False):
                    ''.format(w))
 
     # fill the gap, if desired
-    if not fill_gap:
+    if fill_with is None:
         if not silent:
             print 'leaving a gap where line was'
             return spec[~gap]
     else:
-        n = fill_gap
+        n = fill_with
         if not silent:
             print 'filling the gap with an order {} polynomial'.format(n)
 
