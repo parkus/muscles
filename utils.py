@@ -214,8 +214,14 @@ def gappyedges(spectbl):
     igaps = igaps + np.arange(len(igaps)) + 1
     return edges, igaps
 
+def gapranges(spectbl):
+    """Return a list of the ranges of the gaps in the spectrum."""
+    w0, w1 = spectbl['w0'], spectbl['w1']
+    igaps = np.nonzero(w0[1:] > w1[:-1])[0]
+    return np.array([[w1[i], w0[i+1]] for i in igaps])
+
 def fillgaps(spectbl, fill_value=np.nan):
-    """Fill any gaps in the wavelength range of spectbl with spome value."""
+    """Fill any gaps in the wavelength range of spectbl with some value."""
     w0, w1 = spectbl['w0'], spectbl['w1']
     gaps = ~np.isclose(w0[1:], w1[:-1])
     if ~np.any(gaps):

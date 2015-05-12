@@ -85,7 +85,6 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, silent=False):
 
     # normalize and splice according to input order
     spec = specs.pop(0)
-    spec['NAME'] = db.parse_name(db.panpath(star))
     while len(specs):
         addspec = specs.pop(0)
         name = addspec.meta['NAME']
@@ -114,6 +113,7 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, silent=False):
             addspec = normalize(spec, addspec, silent=silent)
 
         spec = smartsplice(spec, addspec, silent=silent)
+    spec['NAME'] = db.parse_name(db.panpath(star))
 
     #replace lya portion with model
     if lyafile is None:
@@ -225,15 +225,16 @@ def normalize(spectbla, spectblb, flagmask=False, silent=False):
         return area, error
     areas, errors = zip(*map(getarea, ospecs))
     if not silent:
-        print ('master spectrum has overlap area    {} ({})'
-               'secondary spectrum has overlap area {} ({})'
+        print ('master spectrum has overlap area    {:.2e} ({:.2e})\n'
+               'secondary spectrum has overlap area {:.2e} ({:.2e})'
                ''.format(areas[0], errors[0], areas[1], errors[1]))
     diff = abs(areas[1] - areas[0])
     differr = mnp.quadsum(errors)
     p = 2.0 * (1.0 - norm.cdf(diff, loc=0.0, scale=differr))
     if not silent:
-        print ('the difference is {} ({}), giving a probability {:.4f} that'
-               'the difference is spurious'.format(diff, differr, p))
+        print ('difference =                         {:.2e} ({:.2e})'
+               ''.format(diff, differr))
+        print 'probability that the difference is spurious = {:.4f}'.format(p)
     if p > 0.05:
         if not silent:
             print 'secondary will not be normalized to master'
@@ -290,19 +291,22 @@ def smartsplice(spectbla, spectblb, minsplice=0.05, silent=False):
     if not utils.overlapping(*both): #they don't overlap
         return utils.vstack(both)
 
-    #if the spectra have gaps within the overlap, split them at their gaps,
-    #sort them, and splice in pairs
+    #get their overlap and the range of the overlap
     over0, over1 = utils.argoverlap(*both, method='loose')
     ospec0, ospec1 = spec0[over0], spec1[over1]
-    if utils.hasgaps(ospec0) or utils.hasgaps(ospec1):
-        specs = sum(map(utils.gapsplit, both), [])
-        specs.sort(key=key)
-        return reduce(smartsplice, specs)
-
-    #get their ranges
     oboth = [ospec0, ospec1]
     wr0, wr1 = [[s['w0'][0], s['w1'][-1]] for s in oboth]
     wr = [max(wr0[0], wr1[0]), min(wr0[1], wr1[1])]
+
+    #if the spectra have gaps within the overlap, split them at their gaps,
+    #sort them, and splice in pairs
+    gaps0, gaps1 = map(utils.gapranges, both)
+    gapsin0 = np.any(mnp.inranges(gaps0.flatten(), wr1))
+    gapsin1 = np.any(mnp.inranges(gaps1.flatten(), wr0))
+    if gapsin0 or gapsin1:
+        specs = sum(map(utils.gapsplit, both), [])
+        specs.sort(key=key)
+        return reduce(smartsplice, specs)
 
     #if either spectrum has zeros for errors, don't use it for any of the
     #overlap
@@ -475,7 +479,7 @@ def splice(spectbla, spectblb):
     metas = [s.meta for s in [spectbla, spectblb]]
     spec.meta['SOURCESPECS'] = sum([m['SOURCESPECS'] for m in metas], [])
     spec.meta['FILENAME'] = ''
-    spec.meta['NAME'] = 'stitched spectrum, see sourcespecs'
+    spec.meta['NAME'] = 'stitched spectrum'
     return spec
 
 def cullrange(spectbl, wrange):
