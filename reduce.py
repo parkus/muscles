@@ -63,40 +63,41 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, silent=False):
     files, lyafile = db.panfiles(star)
     specs = io.read(files)
 
-    #make sure all spectra are of the same star
+    # make sure all spectra are of the same star
     star = __same_star(specs)
 
-    #make sure spectra are each from a single source
+    # make sure spectra are each from a single source
     for i,s in enumerate(specs):
         try:
             __same_instrument([s])
         except ValueError:
             raise ValueError('More than one instrument used in spectbl {}'.format(i))
 
-    #carry out custom trims according to user-defined settings
+    # carry out custom trims according to user-defined settings
     for i in range(len(specs)):
         name = specs[i].meta['NAME']
         goodranges = sets.get_custom_range(name)
         if goodranges is not None:
             if not silent:
                 print ('trimming spectra in {} to the ranges {}, bcuz you '
-                       'siad to'.format(name, goodranges))
+                       'said to'.format(name, goodranges))
             specs[i] = utils.keepranges(specs[i], goodranges)
 
-    #normalize and splice according to input order
+    # normalize and splice according to input order
     spec = specs.pop(0)
+    spec['NAME'] = db.parse_name(db.panpath(star))
     while len(specs):
         addspec = specs.pop(0)
-        f = files.pop(0)
+        name = addspec.meta['NAME']
         specrange = [addspec['w0'][0], addspec['w1'][-1]]
 
         if not silent:
-            print 'splicing in {}, {:.1f}-{:.1f}'.format(f, *specrange)
+            print 'splicing in {}, {:.1f}-{:.1f}'.format(name, *specrange)
 
-        if 'sts' not in f:
+        if 'sts' not in name:
             if not silent: print '\tremoving airglow lines'
             relevant = mnp.inranges(airglow_wavelengths, specrange)
-            rmv = lambda s, l: remove_line(s, l, fill_gap=4, silent=silent)
+            rmv = lambda s, l: remove_line(s, l, fill_with=4, silent=silent)
             addspec = reduce(rmv, airglow_wavelengths[relevant], addspec)
         else:
             if not silent: print '\tSTIS spectrum, no airglow removal'
@@ -125,6 +126,12 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, silent=False):
     spec = splice(spec, lyaspec)
 #    spec = cullrange(spec, settings.lyacut)
 #    spec = smartsplice(spec, lyaspec)
+
+    order, span = 4, 10
+    if not silent:
+        print ('filling in any gaps with an order {} polynomial fit to an '
+               'area {}x the gap width'.format(order, span))
+    spec = fill_gaps(spec, fill_with=order, fit_span=span, silent=silent)
 
     # resample at constant R and dR
     if not silent:
@@ -177,12 +184,12 @@ def normalize(spectbla, spectblb, flagmask=False, silent=False):
         ospeca = spectbla[overa]
         wbins = utils.wbins(ospeca)
         ospecb = rebin(spectblb, wbins)
-        order = slice(step=-1)
+        order = slice(None, None, -1)
     else:
         ospecb = spectblb[overb]
         wbins = utils.wbins(ospecb)
         ospeca = rebin(spectbla, wbins)
-        order = slice(step=1)
+        order = slice(None, None, 1)
     if not silent:
         over_range = [ospeca['w0'][0], ospeca['w1'][-1]]
         print ('spectra overlap at {:.2f}-{:.2f}'.format(*over_range))
@@ -220,7 +227,7 @@ def normalize(spectbla, spectblb, flagmask=False, silent=False):
     if not silent:
         print ('master spectrum has overlap area    {} ({})'
                'secondary spectrum has overlap area {} ({})'
-               ''.format(*zip(areas, errors)))
+               ''.format(areas[0], errors[0], areas[1], errors[1]))
     diff = abs(areas[1] - areas[0])
     differr = mnp.quadsum(errors)
     p = 2.0 * (1.0 - norm.cdf(diff, loc=0.0, scale=differr))
@@ -464,6 +471,11 @@ def splice(spectbla, spectblb):
         speclist.append(rightspec)
 
     spec = utils.vstack(speclist)
+
+    metas = [s.meta for s in [spectbla, spectblb]]
+    spec.meta['SOURCESPECS'] = sum([m['SOURCESPECS'] for m in metas], [])
+    spec.meta['FILENAME'] = ''
+    spec.meta['NAME'] = 'stitched spectrum, see sourcespecs'
     return spec
 
 def cullrange(spectbl, wrange):
@@ -533,7 +545,10 @@ def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime',
 
     goodbins = (cexpt > 0)
     data = [v[goodbins] for v in [cw0,cw1,cf,ce,cexpt,dq,cinst,cnorm,cstart,cend]]
-    spectbl = utils.list2spectbl(data, star, None, sourcefiles)
+    cfile = db.coaddpath(sourcefiles[0])
+    cname = basename(cfile)
+    sourcespecs = [s.meta['NAME'] for s in spectbls]
+    spectbl = utils.list2spectbl(data, star, '', cname, sourcespecs)
 
     if all([np.all(s['instrument'] > 0) for s in spectbls]):
         assert np.all(spectbl['instrument'] > 0)
@@ -544,7 +559,6 @@ def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime',
         assert np.all(spectbl['maxobsdate'] >= spectbl['minobsdate'])
 
     if savefits:
-        cfile = db.coaddpath(sourcefiles[0])
         io.writefits(spectbl, cfile, overwrite=True)
         spectbl.meta['FILENAME'] = cfile
         if not silent: print 'coadd saved to \n\t{}'.format(cfile)
@@ -558,12 +572,13 @@ def auto_coadd(star, configs=None, silent=False):
         groups = [db.sourcespecfiles(star, config) for config in configs]
 
     for group in groups:
-        if len(group) == 1 and not utils.isechelle(group):
+        if len(group) == 1 and not utils.isechelle(group[0]):
             if not silent:
                 print 'single file for {}, moving on'.format(basename(group[0]))
             continue
         if not silent:
-            print 'coadding the files \n\t{}'.format('\n\t'.join(group))
+            names = map(basename, group)
+            print 'coadding the files \n\t{}'.format('\n\t'.join(names))
         echelles = map(utils.isechelle, group)
         if any(echelles):
             weights = 'error'
@@ -603,7 +618,7 @@ def phxspec(Teff, logg=4.5, FeH=0.0, aM=0.0, repo=db.phxrepo):
     normfac, start, end = 1.0, 0.0, 0.0
     data = [db.phxwave[:-1], db.phxwave[1:], spec, err, expt, flags, source,
             normfac, start, end]
-    return utils.list2spectbl(data, '', '')
+    return utils.list2spectbl(data)
 
 def auto_phxspec(star, silent=False):
     Teff, kwds = db.phxinput(star)
@@ -614,6 +629,7 @@ def auto_phxspec(star, silent=False):
     spec = phxspec(Teff, **kwds)
     spec.meta['STAR'] = star
     path = db.phxpath(star)
+    spec.meta['NAME'] = db.parse_name(path)
     if not silent:
         print 'writing spectrum to {}'.format(path)
     io.writefits(spec, path, overwrite=True)
@@ -622,6 +638,9 @@ def auto_customspec(star, specfiles=None, silent=False):
     if specfiles is None:
         specfiles = db.allspecfiles(star)
     ss = settings.load(star)
+    if not silent:
+        if len(ss.custom_extractions) == 0:
+            'no custom extractions set for {}'.format(star)
     for custom in ss.custom_extractions:
         config = custom['config']
         if not silent:
@@ -654,7 +673,7 @@ def auto_customspec(star, specfiles=None, silent=False):
             norm = 1.0
             datalist.extend([expt, spec['dq'], inst, norm, start, end])
 
-            spectbl = utils.list2spectbl(datalist, star, '', [x2dfile])
+            spectbl = utils.list2spectbl(datalist, star, specfile, '', [x2dfile])
             if not silent:
                  print 'saving custom extraction to {}'.format(specfile)
             io.writefits(spectbl, specfile, overwrite=True)
@@ -698,10 +717,10 @@ def rebin(spec, newbins):
 
     #spectbl accoutrments
     star, name, fn, sf = [spec.meta[s] for s in
-                          ['STAR','NAME', 'FILENAME', 'SOURCEFILES']]
+                          ['STAR','NAME', 'FILENAME', 'SOURCESPECS']]
 
     return utils.vecs2spectbl(w0, w1, flux, error, expt, flags, insts, normfac,
-                              start, end, star, name, fn, sf)
+                              start, end, star, fn, name, sf)
 
 def remove_line(spec, wavelength, fill_with=None, silent=False):
     """
@@ -713,22 +732,40 @@ def remove_line(spec, wavelength, fill_with=None, silent=False):
     spec : muscles spectbl
     wavelength : float
         central wavelength of line
-    fill_gap : {None|int}
+    fill_with : {None|int}
         Whether to fill the resulting gap. If None, just return spectrum
         with a gap. If an integer, fit a polynomial of that order and use
         it to fill the gap.
+
+    Returns
+    -------
+    spec : muscles spectbl
+        spectrum with line removed or filled, if found
     """
     w = wavelength
+    n = 4 if fill_with is None else fill_with
 
     # clip spectrum down to just a window around the line for fast processing
-    width = w * 0.05
+    width = w * 0.01
     window = [w - width / 2.0, w + width / 2.0]
     minispec = utils.keepranges(spec, window)
+
+    # remove any zero-error values. polyfit can't handle 'em
+    minispec = minispec[minispec['error'] > 0.0]
 
     # identify lines vs continuum in spectrum
     wbins = utils.wbins(minispec)
     flux, error = minispec['flux'], minispec['error']
-    flags = specutils.split(wbins, flux, error)
+    pcont, pline = 1.0 - 1e-3, 1.0 - 1e-5
+    try:
+        flags = specutils.split(wbins, flux, error, contcut=pcont,
+                                linecut=pline, contfit=n)
+    except IndexError:
+        if not silent:
+            print ('tried to remove line at {:.2f} AA, but could not separate '
+                   'line from continuum emission within {:.2f}-{:.2f}'
+                   ''.format(w, window[0], window[1]))
+            return spec
 
     # isolate range of emission feature that includes wavelength
     line_ranges = specutils.flags2ranges(wbins, flags == 1)
@@ -743,8 +780,9 @@ def remove_line(spec, wavelength, fill_with=None, silent=False):
             print 'clipping out line in {:.2f}-{:.2f} AA'.format(*bad_range)
     else:
         if not silent:
-            print ('tried to remove line at {:.2f}, but no line was identfied'
-                   ''.format(w))
+            print ('tried to remove line at {:.2f} AA, but none of the lines '
+                   'identified covered that wavelength'.format(w))
+        return spec
 
     # fill the gap, if desired
     if fill_with is None:
@@ -752,7 +790,6 @@ def remove_line(spec, wavelength, fill_with=None, silent=False):
             print 'leaving a gap where line was'
             return spec[~gap]
     else:
-        n = fill_with
         if not silent:
             print 'filling the gap with an order {} polynomial'.format(n)
 
@@ -762,6 +799,7 @@ def remove_line(spec, wavelength, fill_with=None, silent=False):
 
         # fill gap
         spec = Table(spec, copy=True)
+        wbins = utils.wbins(spec)
         spec['flux'][gap] = poly(wbins[gap, :])[0]
         spec['error'][gap] = 0.0
         spec['instrument'][gap] = settings.getinsti('mod_gap_fill')
@@ -771,6 +809,9 @@ def remove_line(spec, wavelength, fill_with=None, silent=False):
         spec['normfac'][gap] = 1.0
 
         return spec
+
+def fill_gaps(spec, fill_with=4, fit_span=10, fit_pts=None, silent=False):
+    pass #TODO:
 
 def __inrange(spectbl, wr):
     in0, in1 = [mnp.inranges(spectbl[s], wr) for s in ['w0', 'w1']]

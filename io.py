@@ -64,10 +64,10 @@ def readstdfits(specfile):
     spectbl = Table.read(specfile, hdu=1)
     spectbl.meta['FILENAME'] = specfile
     try:
-        sourcefiles = fits.getdata(specfile, 'sourcefiles')['sourcefiles']
-        spectbl.meta['SOURCEFILES'] = sourcefiles
+        sourcespecs = fits.getdata(specfile, 'sourcespecs')['sourcespecs']
+        spectbl.meta['SOURCESPECS'] = sourcespecs
     except KeyError:
-        spectbl.meta['SOURCEFILES'] = []
+        spectbl.meta['SOURCESPECS'] = []
 
     if 'hst' in specfile:
         spectbl = __trimHSTtbl(spectbl)
@@ -198,10 +198,10 @@ def writefits(spectbl, name, overwrite=False):
     """
     #use the native astropy function to write to fits
     try:
-        sourcefiles = spectbl.meta['SOURCEFILES']
-        del spectbl.meta['SOURCEFILES'] #otherwise this makes a giant nasty header
+        sourcespecs = spectbl.meta['SOURCESPECS']
+        del spectbl.meta['SOURCESPECS'] #otherwise this makes a giant nasty header
     except KeyError:
-        sourcefiles = [spectbl.meta['FILENAME']]
+        sourcespecs = [spectbl.meta['FILENAME']]
     spectbl.meta['FILENAME'] = name
     spectbl.write(name, overwrite=overwrite, format='fits')
 
@@ -236,17 +236,17 @@ def writefits(spectbl, name, overwrite=False):
         idhdu = fits.BinTableHDU.from_columns(cols, header=hdr, name='legend')
         ftbl.append(idhdu)
 
-        #add another bintable for the sourcefiles, if needed
-        if len(sourcefiles):
-            maxlen = max([len(sf) for sf in sourcefiles])
+        #add another bintable for the sourcespecs, if needed
+        if len(sourcespecs):
+            maxlen = max([len(ss) for ss in sourcespecs])
             dtype = '{:d}A'.format(maxlen)
-            col = [fits.Column('sourcefiles', dtype, array=sourcefiles)]
+            col = [fits.Column('sourcespecs', dtype, array=sourcespecs)]
             hdr = fits.Header()
             hdr['comment'] = ('This extension contains a list of the source '
                               'files that were incorporated into this '
                               'spectrum.')
             sfhdu = fits.BinTableHDU.from_columns(col, header=hdr,
-                                                  name='sourcefiles')
+                                                  name='sourcespecs')
             ftbl.append(sfhdu)
 
         ftbl.flush()
@@ -292,9 +292,9 @@ def phxdata(Teff, logg=4.5, FeH=0.0, aM=0.0, repo='ftp', ftpbackup=True):
             raise IOError('File not found at {}.'.format(path))
     return fspec[0].data
 
-def __maketbl(data, specfile, sourcefiles=[]):
+def __maketbl(data, specfile, sourcespecs=[]):
     star = specfile.split('_')[4]
-    return utils.list2spectbl(data, star, specfile, sourcefiles)
+    return utils.list2spectbl(data, star, specfile, '', sourcespecs)
 
 def __trimHSTtbl(spectbl):
     """trim off-detector portions on either end of spectbl"""

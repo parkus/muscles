@@ -290,6 +290,7 @@ def panfiles(star):
     """Return the files for the spectra to be spliced into a panspectrum,
     replacing "raw" files with coadds and custom extractions as appropriate
     and ordering according to how the spectra should be normalized."""
+    #FIXME: not replacing coadds properly for eps eri
 
     allfiles = allsourcefiles(star)
     use = lambda name: any([s in name for s in settings.instruments])
@@ -463,9 +464,9 @@ def find_coaddfile(specfiles):
 
         #check that the coadd contains the same data as the spectbls
         #return none if any is missing
-        csourcefiles = coadd.meta['SOURCEFILES']
+        csourcespecs = coadd.meta['SOURCESPECS']
         for sf in specfiles:
-            if sf not in csourcefiles:
+            if sf not in csourcespecs:
                 return None
         return coaddfile
 

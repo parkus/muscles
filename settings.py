@@ -47,6 +47,7 @@ instruments = ['hst_cos_g130m','hst_cos_g160m','hst_cos_g230l','hst_sts_g230l',
                'hst_sts_g430m','mod_gap_fill','mod_euv_-----','xmm_mos_-----',
                'mod_phx_-----','mod_lya_kevin']
 instvals = [2**i for i in range(len(instruments))]
+
 def getinsti(instrument):
     """Return the identifying number for instrument, where instrument is
     of the form, e.g., 'hst_cos_g130m'."""

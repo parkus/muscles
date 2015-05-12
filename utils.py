@@ -11,6 +11,7 @@ import numpy as np
 from astropy.table import Table, Column
 from astropy.table import vstack as tblstack
 from os import path
+import database as db
 
 keys = ['units', 'dtypes', 'fmts', 'descriptions', 'colnames']
 spectbl_format = [settings.spectbl_format[key] for key in keys]
@@ -77,7 +78,7 @@ def conform_spectbl(spectbl):
     return Table(cols, meta=meta)
 
 def vecs2spectbl(w0, w1, flux, err, exptime, flags, instrument, normfac,
-                 start, end, star, filename, sourcefiles=[]):
+                 start, end, star='', filename='', name='', sourcespecs=[]):
     """
     Assemble the vector data into the standard MUSCLES spectbl format.
 
@@ -86,17 +87,18 @@ def vecs2spectbl(w0, w1, flux, err, exptime, flags, instrument, normfac,
     w0, w1, flux, err : 1-D array-like
     exptime, flags, instrument : 1-D array-like or scalar
     star : str
-    sourcefiles : list of strings
+    sourcespecs : list of strings
 
     Returns
     -------
     spectbl : MUSCLES spectrum (astropy) table
     """
     #TODO: add new 'name' meta
-    datalist = [w0, w1, flux, err, exptime, flags, instrument, normfac, start, end]
-    return list2spectbl(datalist, star, filename, sourcefiles)
+    datalist = [w0, w1, flux, err, exptime, flags, instrument, normfac, start,
+                end]
+    return list2spectbl(datalist, star, filename, name, sourcespecs)
 
-def list2spectbl(datalist, star, filename, sourcefiles=[]):
+def list2spectbl(datalist, star='', filename='', name='', sourcespecs=[]):
     """
     Assemble the vector data into the standard MUSCLES spectbl format.
 
@@ -106,7 +108,7 @@ def list2spectbl(datalist, star, filename, sourcefiles=[]):
         rows are w0, w1, flux, err, exptime, flags, instrument all of length N
     star : str
 
-    sourcefiles : list of strings
+    sourcespecs : list of strings
 
     Returns
     -------
@@ -121,9 +123,12 @@ def list2spectbl(datalist, star, filename, sourcefiles=[]):
     #make table
     cols = [Column(d,n,dt,description=dn,unit=u,format=f) for d,n,dt,dn,u,f in
             zip(datalist,colnames,dtypes,descriptions,units,fmts)]
+    if name == '' and filename != '':
+        name = db.parse_name(filename)
     meta = {'FILENAME' : filename,
-            'SOURCEFILES' : sourcefiles,
-            'STAR' : star}
+            'SOURCESPECS' : sourcespecs,
+            'STAR' : star,
+            'NAME' : name}
     return Table(cols, meta=meta)
 
 def vstack(spectbls):
@@ -133,15 +138,15 @@ def vstack(spectbls):
     else:
         star = stars[0]
 
-    sourcefiles = []
-    for s in spectbls: sourcefiles.extend(s.meta['SOURCEFILES'])
-    sourcefiles = list(set(sourcefiles))
+    sourcespecs = []
+    for s in spectbls: sourcespecs.extend(s.meta['SOURCESPECS'])
+    sourcespecs = list(set(sourcespecs))
 
     data = []
     for name in colnames:
         data.append(np.concatenate([s[name] for s in spectbls]))
 
-    return list2spectbl(data, star, '', sourcefiles)
+    return list2spectbl(data, star, '', sourcespecs)
 
 def gapsplit(spectbl):
     gaps = (spectbl['w0'][1:] > spectbl['w1'][:-1])
