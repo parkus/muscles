@@ -25,6 +25,7 @@ datapath = local + '/data'
 productspath = local + '/products'
 
 target_list = root + '/target_list.txt'
+observed_list = root + '/observed_list.txt'
 
 bandmap = {'u':'uv', 'x':'x-ray', 'v':'visible', 'r':'ir'}
 
@@ -304,7 +305,7 @@ def panfiles(star):
     files = sub_customfiles(files)
 
     #parse out lya file
-    lyafile = filter(lambda f: settings.instruments[13] in f, files)
+    lyafile = filter(lambda f: 'mod_lya' in f, files)
     assert len(lyafile) <= 1
     if len(lyafile):
         lyafile = lyafile[0]
@@ -466,7 +467,7 @@ def find_coaddfile(specfiles):
         #return none if any is missing
         csourcespecs = coadd.meta['SOURCESPECS']
         for sf in specfiles:
-            if sf not in csourcespecs:
+            if parse_name(sf) not in csourcespecs:
                 return None
         return coaddfile
 

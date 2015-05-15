@@ -77,8 +77,9 @@ def conform_spectbl(spectbl):
         cols.append(Column(spectbl[n], n, dt, unit=u, description=de, format=f))
     return Table(cols, meta=meta)
 
-def vecs2spectbl(w0, w1, flux, err, exptime, flags, instrument, normfac,
-                 start, end, star='', filename='', name='', sourcespecs=[]):
+def vecs2spectbl(w0, w1, flux, err=0.0, exptime=0.0, flags=0, instrument=99,
+                 normfac=0.0, start=0.0, end=0.0, star='', filename='',
+                 name='', sourcespecs=[], comments=[]):
     """
     Assemble the vector data into the standard MUSCLES spectbl format.
 
@@ -96,9 +97,10 @@ def vecs2spectbl(w0, w1, flux, err, exptime, flags, instrument, normfac,
     #TODO: add new 'name' meta
     datalist = [w0, w1, flux, err, exptime, flags, instrument, normfac, start,
                 end]
-    return list2spectbl(datalist, star, filename, name, sourcespecs)
+    return list2spectbl(datalist, star, filename, name, sourcespecs, comments)
 
-def list2spectbl(datalist, star='', filename='', name='', sourcespecs=[]):
+def list2spectbl(datalist, star='', filename='', name='', sourcespecs=[],
+                 comments=[]):
     """
     Assemble the vector data into the standard MUSCLES spectbl format.
 
@@ -128,10 +130,11 @@ def list2spectbl(datalist, star='', filename='', name='', sourcespecs=[]):
     meta = {'FILENAME' : filename,
             'SOURCESPECS' : sourcespecs,
             'STAR' : star,
-            'NAME' : name}
+            'NAME' : name,
+            'COMMENT' : comments}
     return Table(cols, meta=meta)
 
-def vstack(spectbls):
+def vstack(spectbls, name=''):
     stars = [s.meta['STAR'] for s in spectbls]
     if len(set(stars)) > 1:
         raise ValueError("Don't try to stack tables from different stars.")
@@ -139,14 +142,19 @@ def vstack(spectbls):
         star = stars[0]
 
     sourcespecs = []
-    for s in spectbls: sourcespecs.extend(s.meta['SOURCESPECS'])
+    comments = []
+    for s in spectbls:
+        sourcespecs.extend(s.meta['SOURCESPECS'])
+        comments.extend(s.meta['COMMENT'])
     sourcespecs = list(set(sourcespecs))
+    comments = list(set(comments))
 
     data = []
-    for name in colnames:
-        data.append(np.concatenate([s[name] for s in spectbls]))
+    for colname in colnames:
+        data.append(np.concatenate([s[colname] for s in spectbls]))
 
-    return list2spectbl(data, star, '', sourcespecs)
+    return list2spectbl(data, star, name=name, sourcespecs=sourcespecs,
+                        comments=comments)
 
 def gapsplit(spectbl):
     gaps = (spectbl['w0'][1:] > spectbl['w1'][:-1])

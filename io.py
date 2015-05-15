@@ -63,6 +63,7 @@ def readstdfits(specfile):
     """Read a fits file that was created by writefits."""
     spectbl = Table.read(specfile, hdu=1)
     spectbl.meta['FILENAME'] = specfile
+    spectbl.meta['NAME'] = db.parse_name(specfile)
     try:
         sourcespecs = fits.getdata(specfile, 'sourcespecs')['sourcespecs']
         spectbl.meta['SOURCESPECS'] = sourcespecs
@@ -196,13 +197,16 @@ def writefits(spectbl, name, overwrite=False):
     -------
     None
     """
-    #use the native astropy function to write to fits
-    try:
-        sourcespecs = spectbl.meta['SOURCESPECS']
-        del spectbl.meta['SOURCESPECS'] #otherwise this makes a giant nasty header
-    except KeyError:
-        sourcespecs = [spectbl.meta['FILENAME']]
+    # astropy write function doesn't store list meta correctly, so extract here
+    # to add later
+    sourcespecs = spectbl.meta['SOURCESPECS']
+    del spectbl.meta['SOURCESPECS'] #otherwise this makes a giant nasty header
+    comments = spectbl.meta['COMMENT']
+    del spectbl.meta['COMMENT']
+
     spectbl.meta['FILENAME'] = name
+
+    #use the native astropy function to write to fits
     spectbl.write(name, overwrite=overwrite, format='fits')
 
     #but open it up to do some modification
@@ -215,6 +219,10 @@ def writefits(spectbl, name, overwrite=False):
         for i,name in enumerate(spectbl.colnames):
             key = 'TDESC' + str(i+1)
             ftbl[1].header[key] = spectbl[name].description
+
+        # add comments
+        if len(comments) == 0: comments = ['']
+        for comment in comments: ftbl[1].header['COMMENT'] = comment
 
         #add an extra bintable for the instrument identifiers
         cols = [fits.Column('instruments','13A', array=settings.instruments),
@@ -294,7 +302,7 @@ def phxdata(Teff, logg=4.5, FeH=0.0, aM=0.0, repo='ftp', ftpbackup=True):
 
 def __maketbl(data, specfile, sourcespecs=[]):
     star = specfile.split('_')[4]
-    return utils.list2spectbl(data, star, specfile, '', sourcespecs)
+    return utils.list2spectbl(data, star, specfile, sourcespecs=sourcespecs)
 
 def __trimHSTtbl(spectbl):
     """trim off-detector portions on either end of spectbl"""
