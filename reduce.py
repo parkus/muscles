@@ -100,7 +100,7 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, silent=False):
                 print '\n\tremoving airglow lines from {}'.format(name)
             specrange = [spec['w0'][0], spec['w1'][-1]]
             relevant = mnp.inranges(airglow_wavelengths, specrange)
-            rmv = lambda s, l: remove_line(s, l, 4, R_aperture, silent=silent)
+            rmv = lambda s, l: remove_line(s, l, 1, R_aperture, silent=silent)
             spec = reduce(rmv, airglow_wavelengths[relevant], spec)
             specs[i] = spec
 
@@ -167,20 +167,37 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, silent=False):
 
     return spec,Rspec,dspec
 
-def normalize(spectbla, spectblb, flagmask=False, silent=False):
+def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False):
     """
     Normalize the spectrum b to spectrum a.
 
-    The spectra are assumed to be orded by quality. Thus, spectra[0] is the
-    gold standard against which all others are normalized.
+    Parameters
+    ----------
+    spectbla : muscles spectrum
+        spectrum to normalize against
+    spectblb : muscles spectrum
+        spectrum to be normalized. wavelength and flux units must be the 
+        same in a and b
+    worry : {float|False}
+        consider errors in the overlapping area of the spectra. if the
+        areas are consistent with being identical with probability p
+        > worry, normalization will not occur. If normalization does
+        occur, an error in the normalization factor will be computed and
+        propagated.
+    flagmask : {True|False}
+        Mask data that is flagged when computing areas of overlap.
+    silent : {True|False}
+        Print lots of warm fuzzies...
 
-    spectblb is not normalized if:
-    - spectbla has all 0.0 errors (meaning it's a model)
-    - the normalization factor is consistent with 1.0 to greater than 95%
-        confidence
+    Returns
+    -------
+    normspec : muscles spectrum
+        normalized spectrum
 
-    Errors in spectblb are augmented using the quadratic approximation
-    according to the error in the normalization factor.
+    Notes
+    -----
+    - if spectbla has all 0.0 errors (meaning it's a model) normalization 
+        does not occur
     """
 
     if not silent:
@@ -252,13 +269,17 @@ def normalize(spectbla, spectblb, flagmask=False, silent=False):
         print ('difference =                        {:.2e} ({:.2e})'
                ''.format(diff, differr))
         print 'probability that the difference is spurious = {:.4f}'.format(p)
-    if p > 0.05:
+    if worry and p > worry:
         if not silent:
-            print 'secondary will not be normalized to master'
+            print ('{} > {}, so secondary will not be normalized to master'
+                   ''.format(p, worry))
         return spectblb
     normfac = areas[0]/areas[1]
-    normfacerr = sqrt((errors[0]/areas[1])**2 +
-                      (areas[0]*errors[1]/areas[1]**2)**2)
+    if worry: 
+        normfacerr = sqrt((errors[0]/areas[1])**2 +
+                          (areas[0]*errors[1]/areas[1]**2)**2)
+    else:
+        normfacerr = 0.0
     if not silent:
         print ('secondary will be normalized by a factor of {} ({})'
                ''.format(normfac, normfacerr))
@@ -532,7 +553,8 @@ def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime',
           silent=False):
     """Coadd spectra in spectbls. weights can be 'exptime' or 'error'"""
     inst = __same_instrument(spectbls)
-    star = __same_star(spectbls)
+    #star = __same_star(spectbls)
+    star = spectbls[0].meta['STAR']
 
     sourcefiles = [s.meta['FILENAME'] for s in spectbls]
 
@@ -541,7 +563,7 @@ def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime',
     we = [np.append(ww0,ww1[-1]) for ww0,ww1 in zip(w0,w1)]
 
     if any([np.any(n != 1.0) for n in normfac]):
-        raise NotImplementedError("Can't deal with normfacs != 1.0 in coaddition.")
+        warn("Spectra with normfacs != 1.0 are being cladded.")
 
     weights = [1.0/ee**2 for ee in e] if weights == 'error' else expt
     if maskbaddata:
