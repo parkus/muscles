@@ -41,10 +41,11 @@ def isechelle(str_or_spectbl):
         name = str_or_spectbl.meta['FILENAME']
     return '_sts_e' in name
 
-def keepranges(spectbl, *args):
+def keepranges(spectbl, *args, **kwargs):
     """Returns a table with only bins that are fully within the wavelength
-    ranges. *args can either be a Nx2 array of ranges or w0, w1."""
-    keep = argrange(spectbl, *args)
+    ranges. *args can either be a Nx2 array of ranges or w0, w1. **kwargs
+    just for ends={'tight'|'loose'}"""
+    keep = argrange(spectbl, *args, **kwargs)
     return spectbl[keep]
 
 def exportrange(spectbl, w0, w1, folder, overwrite=False):
@@ -54,6 +55,61 @@ def exportrange(spectbl, w0, w1, folder, overwrite=False):
     name += '_waverange {}-{}.fits'.format(w0,w1)
     name = path.join(folder, name)
     io.writefits(piece, name, overwrite=overwrite)
+
+def specwhere(spec, w):
+    """Determine the splice locations where the wavelengths in w fall in the
+    spectrum. Return a vecotr of flags specifying whether each w is outside the
+    spectrum (-1), in the spectrum (1), in a gap in the spectrum (-2), or
+    exactly on the edge of a bin in the spectrum (2)
+
+    w must be sorted
+
+    returns flags, indices
+    indices of pts in gaps or on bin edges will be the splice index of the gap/edge
+    indices of pts out of the spectral range will be 0 or len(spec)
+
+    if w is scalar flags and indices are converted to scalar
+    """
+    scalar = np.isscalar(w)
+    ww = np.array(w)
+
+    # create edge vector from spectrum
+    edges, jgaps = gappyedges(spec)
+
+    # find where w values fit in that grid
+    i = np.array(np.searchsorted(edges, ww, side='left'))
+
+    # find w values that are in a gap or on a bin edge
+    # those on an edge are given an index left of that edge, so can be misplaced
+    ir = np.searchsorted(edges, ww, side='right')
+    inspecrange = ((i > 0) & (i < len(edges)))
+    on_edge = (i + 1 == ir)
+    if len(jgaps):
+        ingap = reduce(np.logical_or, [i == j for j in jgaps])
+    else:
+        ingap = np.zeros(ww.shape, bool)
+    inbins = ~(ingap | on_edge) & inspecrange
+    out = ~(ingap | on_edge | inspecrange)
+
+    # flag w values
+    flags = np.zeros(ww.shape, 'i1')
+    flags[inbins] = 1
+    flags[out] = -1
+    flags[on_edge] = 2
+    flags[ingap] = -2
+
+    # shift indices to account for gaps
+    while len(jgaps):
+        j = jgaps[0]
+        i[i >= j] -= 1
+        jgaps = jgaps[1:] - 1
+    i[inbins] -= 1
+    i[i > len(spec)] = len(spec)
+
+    if scalar:
+        return int(flags), int(i)
+    else:
+        return flags, i
 
 def clooge_edges(mids):
     """Just uses the midpoints of the midpoints to guess at the edges for
@@ -166,8 +222,8 @@ def gapsplit(spectbl):
 def overlapping(spectbla, spectblb):
     """Check if there is any overlap."""
     wbinsa, wbinsb = map(wbins, [spectbla, spectblb])
-    ainb0, ainb1 = [mnp.inranges(w, wbinsb) for w in wbinsa.T]
-    bina0, bina1 = [mnp.inranges(w, wbinsa) for w in wbinsb.T]
+    ainb0, ainb1 = [mnp.inranges(w, wbinsb, [0, 0]) for w in wbinsa.T]
+    bina0, bina1 = [mnp.inranges(w, wbinsa, [0, 0]) for w in wbinsb.T]
     return np.any(ainb0 | ainb1) or np.any(bina0 | bina1)
 
 def argoverlap(spectbla, spectblb, method='tight'):
@@ -184,11 +240,18 @@ def argoverlap(spectbla, spectblb, method='tight'):
 
     return ao, bo
 
-def argrange(spectbl, *args):
+def argrange(spectbl, *args, **kwargs):
     """Return the boolean indices of the desired range. Inclusive."""
+    if 'ends' in kwargs:
+        ends = kwargs['ends']
+    else:
+        ends = 'tight'
     wrange = args[0] if len(args) == 1 else args
     in0, in1 = [mnp.inranges(spectbl[s], wrange, [1, 1]) for s in ['w0', 'w1']]
-    return in0 & in1
+    if ends == 'tight':
+        return in0 & in1
+    if ends == 'loose':
+        return in0 | in1
 
 def __getoverlap(ea, eb, igapsa, igapsb, method):
     """Create boolean vector of overlap of b -- for use with argoverlap."""
@@ -198,7 +261,6 @@ def __getoverlap(ea, eb, igapsa, igapsb, method):
     #set values to false that are within gaps of a
     g0, g1 = ea[igapsa - 1], ea[igapsa]
     gaps = np.array([g0, g1]).T
-
     if method == 'tight':
         in0, in1 = map(mnp.inranges, [eb[:-1], eb[1:]], [gaps]*2, [[0,0]]*2)
         ingap = (in0 | in1)

@@ -13,4 +13,4 @@ with open(database.target_list) as f:
 
 with open(database.observed_list) as f:
     observed = f.readlines()
-    observed = [s.replace('\r\n', '') for s in observed]
+    observed = [s.replace('\n', '') for s in observed]

@@ -18,7 +18,7 @@ def seriousdqs(path):
         raise NotImplementedError('No serious dq flags defined for config\n{}'
                                   ''.format(path))
 spectbl_format =  {'units' : ['Angstrom']*2 + ['erg/s/cm2/Angstrom']*2 + ['s','','','','d','d'],
-                   'dtypes' : ['f8']*5 + ['i2']*2 + ['f8']*3,
+                   'dtypes' : ['f8']*5 + ['i2', 'i4'] + ['f8']*3,
                    'fmts' : ['.2f']*2 + ['.2e']*2 + ['.1f', 'b', 'd', '.2f', '.2f', '.2f'],
                    'descriptions' : ['left (short,blue) edge of the wavelength bin',
                                      'right (long,red) edge of the wavelength bin',
@@ -36,17 +36,22 @@ spectbl_format =  {'units' : ['Angstrom']*2 + ['erg/s/cm2/Angstrom']*2 + ['s',''
                    'colnames' : ['w0','w1','flux','error','exptime','flags',
                                  'instrument','normfac','minobsdate','maxobsdate']}
 
-prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m']
+prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m', 'sts_g430l',
+             'sts_g430m']
 
 lyacut = [1208.0, 1222.0]
 
 specstrings = ['x1d', 'mod_euv', 'mod_lya', 'spec', 'sx1', 'mod_phx', 'coadd']
 #listed in normalization order
-instruments = ['hst_cos_g130m','hst_cos_g160m','hst_cos_g230l','hst_sts_e140m',
+instruments = ['hst_cos_g130m','hst_cos_g160m','hst_sts_g430l','hst_sts_g430m',
                'hst_sts_g140m','hst_sts_e230m','hst_sts_e230h','hst_sts_g230l',
-               'hst_sts_g430l','hst_sts_g430m','mod_gap_fill-','mod_euv_-----',
+               'hst_cos_g230l','hst_sts_e140m','mod_gap_fill-','mod_euv_-----',
                'xmm_mos_-----','mod_phx_-----','mod_lya_kevin']
 instvals = [2**i for i in range(len(instruments))]
+
+def getinststr(inst_val):
+    """Return the string version of an instrument value."""
+    return instruments[instvals.index(inst_val)]
 
 def getinsti(instrument):
     """Return the identifying number for instrument, where instrument is
@@ -78,6 +83,7 @@ class StarSettings:
         self.reject_specs = []
         self.notes = []
         self.custom_ranges = {'configs':[], 'ranges':[]}
+        self.norm_ranges = {'configs':[], 'ranges':[]}
 
     def add_custom_extraction(self, config, **kwds):
         """Add a custom extraction os a config string and then kwds to provide
@@ -90,6 +96,11 @@ class StarSettings:
         self.custom_ranges['configs'].append(config)
         self.custom_ranges['ranges'].append(ranges)
 
+    def add_norm_range(self, config, ranges):
+        """Add good wavelength range for a spectrum."""
+        self.norm_ranges['configs'].append(config)
+        self.norm_ranges['ranges'].append(ranges)
+
     def get_custom_range(self, config):
         configmatch = lambda s: s in config
         configs = filter(configmatch, self.custom_ranges['configs'])
@@ -98,6 +109,17 @@ class StarSettings:
         elif len(configs) == 1:
             i = self.custom_ranges['configs'].index(configs[0])
             return reshape(self.custom_ranges['ranges'][i], [-1, 2])
+        else:
+            return None
+
+    def get_norm_range(self, config):
+        configmatch = lambda s: s in config
+        configs = filter(configmatch, self.norm_ranges['configs'])
+        if len(configs) > 1:
+            raise ValueError('multiple custom range matches')
+        elif len(configs) == 1:
+            i = self.norm_ranges['configs'].index(configs[0])
+            return reshape(self.norm_ranges['ranges'][i], [-1, 2])
         else:
             return None
 
@@ -126,4 +148,5 @@ def load(star):
     ss.notes = safeget('notes')
     ss.reject_specs = safeget('reject_specs')
     ss.custom_ranges = safeget('custom_ranges')
+    ss.norm_ranges = safeget('norm_ranges')
     return ss

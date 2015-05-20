@@ -197,6 +197,8 @@ def writefits(spectbl, name, overwrite=False):
     -------
     None
     """
+    spectbl = Table(spectbl, copy=True)
+
     # astropy write function doesn't store list meta correctly, so extract here
     # to add later
     sourcespecs = spectbl.meta['SOURCESPECS']

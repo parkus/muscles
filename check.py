@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 from astropy.table import Table
 from astropy.io import fits
 import database as db
-import io, settings
+import io, settings, utils
 import reduce as red
 from plot import specstep
 import numpy as np
@@ -38,6 +38,17 @@ def HSTcountregions(specfile, scale='auto'):
     Show where the spectrum was extracted in a 2d histogram of counts created
     from the tag or corrtag file of the same name.
     """
+    def ribbonstuff(seg):
+        #get extraction region dimensions
+        args = __ribbons(specfile, seg)
+        N = args.pop()
+        if '_sts_' in specfile:
+            x = np.arange(1, N+1) * stsfac
+        else:
+            x = [1, N+1]
+        args.append(x)
+        __plotribbons(*args)
+        return N / 2.0, args[0] # spec mid loc
 
     if '_sts_' in specfile:
         #read data
@@ -46,33 +57,39 @@ def HSTcountregions(specfile, scale='auto'):
 
         #make image
         __cnts2img(td['axis1'], td['axis2'], scale)
+        ribbonstuff('')
 
-        #get extraction region dimensions
-        args = __stsribbons(specfile)
-        N = args.pop()
-        x = np.arange(1,N+1)*stsfac
-        args.append(x)
-        __plotribbons(*args)
-
-    if '_cos_' in specfile:
+    if 'g130m' in specfile or 'g160m' in specfile:
         for seg in ['a', 'b']:
             #read data
             tagfile = specfile.replace('x1d', 'corrtag_'+seg)
             try:
                 td = fits.getdata(tagfile, 1)
             except IOError:
-                continue
+                if seg == 'b':
+                    print 'segment {} tag file not found'.format(seg)
+                    continue
+                else:
+                    raise IOError()
 
             #create image
             plt.figure()
             __cnts2img(td['xcorr'], td['ycorr'], scale)
+            ribbonstuff(seg)
 
-            #get extraction region dimensions
-            args = __cosribbons(specfile, seg)
-            N = args.pop()
-            x = [1, N+1]
-            args.append(x)
-            __plotribbons(*args)
+    if 'cos_g230l' in specfile:
+        #read data
+        tagfile = specfile.replace('x1d', 'corrtag')
+        td = fits.getdata(tagfile, 1)
+
+        #create image
+        plt.figure()
+        __cnts2img(td['xcorr'], td['ycorr'], scale)
+
+        for seg in ['a', 'b', 'c']:
+            xmid, ymid = ribbonstuff(seg)
+            plt.text(xmid, ymid, seg.upper(), {'fontsize':20}, ha='center',
+                     va='center')
 
 def piecespec(spec):
     """Plot a spectrum color-coded by source instrument."""
@@ -97,15 +114,15 @@ def vetcoadd(star, config):
     assert len(coadd) == 1
     coadd = coadd[0]
 
-    sourcefiles = coadd.meta['SOURCEFILES']
+    sourcefiles = coadd.meta['SOURCESPECS']
     sourcespecs = io.read(sourcefiles)
     for spec in sourcespecs:
         specstep(spec)
 
-    specstep(coadd, lw=2.0, c='k')
+    specstep(coadd, lw=2.0, c='k', alpha=0.5)
     plt.title(path.basename(coadd.meta['FILENAME']))
 
-def vetpanspec(pan_or_star, constant_dw=None):
+def vetpanspec(pan_or_star, constant_dw=None, redlim=8000.0):
     """Plot unnormalized components of the panspec with the panspec to see that
     all choices were good. Phoenix spectrum is excluded because it is too big."""
     if type(pan_or_star) is str:
@@ -115,12 +132,15 @@ def vetpanspec(pan_or_star, constant_dw=None):
         panspec = pan_or_star
         star = panspec.meta['STAR']
     files = db.panfiles(star)[0]
+    panspec = utils.keepranges(panspec, 0.0, redlim)
 
     if constant_dw is None:
         plotfun = specstep
     else:
+        panspec = red.evenbin(panspec, constant_dw)
+        wbins = utils.wbins(panspec)
         def plotfun(spec, **kwargs):
-            s = red.evenbin(spec, constant_dw)
+            s = red.rebin(spec, wbins)
             return specstep(s, **kwargs)
 
     for f in files:
@@ -131,9 +151,33 @@ def vetpanspec(pan_or_star, constant_dw=None):
             x = (spec['w0'][0] + spec['w0'][-1])/2.0
             y = np.mean(spec['flux'])
             inst = db.parse_instrument(f)
-            plt.text(x, y, inst, bbox={'facecolor':'w'}, ha='center',
-                     va='center', color=p.get_color())
+            plt.text(x, y, inst,
+                     bbox={'facecolor':'w', 'alpha':0.5, 'color':p.get_color()},
+                     ha='center', va='center')
     plotfun(panspec, color='k', alpha=0.5)
+    ymax = np.max(utils.keepranges(panspec, 3000.0, 8000.0)['flux'])
+    plt.ylim(-0.01 * ymax, 1.05 * ymax)
+
+def vetnormfacs(star):
+    """Check the normalization of files by plotting normalized and unnormalieze
+    versions."""
+
+    panspec = ml.io.read(db.panpath(star))[0]
+    lyaspec = ml.io.read(db.lyafile(star))[0]
+
+    # find unique normfacs to figure out what has been normalized
+    allnormfacs = panspec['normfac']
+    normfacs = allnormfacs[(allnormfacs > 1e-10) & (allnormfacs != 1.0)]
+    normfacs = np.unique(normfacs)
+
+    for normfac in normfacs:
+        index = np.nonzero(allnormfacs == normfac)[0][0]
+        inst_no = panspec['instrument'][index]
+        inst_str = settings.getinststr(inst_no)
+        specname = filter(lambda s: inst_str in s, panspec.meta['SOURCESPECS'])
+        line = specstep(s)
+
+    linenames = []
 
 def examinedates(star):
     """Plot the min and max obs dates to make sure everything looks peachy."""
@@ -159,7 +203,8 @@ def HSTimgregions(specfile):
     #find 2d image file
     pieces = specfile.split('_')
     custom = 'custom_spec' in specfile
-    newfile = lambda suffix: '_'.join(pieces[:-1] + [suffix])
+    clip = 2 if custom else 1
+    newfile = lambda suffix: '_'.join(pieces[:-clip] + [suffix])
     if custom:
         imgfiles = map(newfile, ['x2d.fits', 'sx2.fits'])
     else:
@@ -183,38 +228,37 @@ def HSTimgregions(specfile):
         smid, shgt, bhgt, bkoff = [spec.meta[s.upper()] for s in
             ['traceloc','extrsize','bksize', 'bkoff']]
         b1mid, b2mid = smid - bkoff, smid + bkoff
-        b1hgt, b2hgt = bhgt
-        ribdims = smid, shgt, b1mid, b1hgt, b2mid, b2hgt
+        b1hgt, b2hgt = bhgt, bhgt
+        ribdims = [smid, shgt, b1mid, b1hgt, b2mid, b2hgt]
         x = [0, n+1]
-    elif '_sts_' in specfile:
-        ribdims = __stsribbons(specfile)[:-1]
-        ribdims = [r/stsfac for r in ribdims]
-        x = np.arange(0, n+1)
-    elif '_cos_' in specfile:
-        ribdims = __cosribbons(specfile)[:-1]
-        x = np.arange(0, n+1)
+    else:
+        ribdims = __ribbons(specfile)
+        if '_sts_' in specfile:
+            N = ribdims.pop()
+            x = np.arange(1, N+1)
+            ribdims = [r/stsfac for r in ribdims]
 
     args = ribdims + [x]
     __plotribbons(*args)
 
-def __cosribbons(specfile, seg):
-    sh = fits.getheader(specfile, 1)
-    smid = sh['sp_loc_'+seg]
-    shgt = sh['sp_hgt_'+seg]
-    b1mid, b2mid = sh['b_bkg1_'+seg], sh['b_bkg2_'+seg]
-    b1hgt, b2hgt = sh['b_hgt1_'+seg], sh['b_hgt2_'+seg]
-    N = sh['talen2']
-    return [smid, shgt, b1mid, b1hgt, b2mid, b2hgt, N]
-
-def __stsribbons(specfile):
-    sd = fits.getdata(specfile, 1)
-    smid = sd['extrlocy']*stsfac
-    M, N = smid.shape
-    b1mid, b2mid = [smid + sd[s][:, np.newaxis]*stsfac for s in
-                    ['bk1offst', 'bk2offst']]
-    shgt, b1hgt, b2hgt = [np.outer(sd[s], np.ones(N))*stsfac for s in
-                    ['extrsize', 'bk1size','bk2size']]
-    return [smid, shgt, b1mid, b1hgt, b2mid, b2hgt, N]
+def __ribbons(specfile, seg=''):
+    if 'sts' in specfile:
+        sd = fits.getdata(specfile, 1)
+        smid = sd['extrlocy']*stsfac
+        M, N = smid.shape
+        b1mid, b2mid = [smid + sd[s][:, np.newaxis]*stsfac for s in
+                        ['bk1offst', 'bk2offst']]
+        shgt, b1hgt, b2hgt = [np.outer(sd[s], np.ones(N))*stsfac for s in
+                        ['extrsize', 'bk1size','bk2size']]
+        return [smid, shgt, b1mid, b1hgt, b2mid, b2hgt, N]
+    if 'cos' in specfile:
+        sh = fits.getheader(specfile, 1)
+        smid = sh['sp_loc_'+seg]
+        shgt = sh['sp_hgt_'+seg]
+        b1mid, b2mid = sh['b_bkg1_'+seg], sh['b_bkg2_'+seg]
+        b1hgt, b2hgt = sh['b_hgt1_'+seg], sh['b_hgt2_'+seg]
+        N = sh['talen2']
+        return [smid, shgt, b1mid, b1hgt, b2mid, b2hgt, N]
 
 def __cnts2img(x,y, scalefunc):
     minx, maxx = floor(np.min(x)), ceil(np.max(x))

@@ -33,7 +33,7 @@ def comparespecs(stars, **kwargs):
         binfunc = kwargs['binfunc']
         del kwargs['binfunc']
     else:
-        binfunc = lambda s: reduce.powerbin(s, R=500.0, lo=1000.0, hi=5000.0)
+        binfunc = lambda s: reduce.powerbin(s, R=5000.0, lo=1100.0, hi=5000.0)
 
     plts = []
     for star in stars:

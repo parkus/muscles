@@ -129,6 +129,11 @@ def setprop(star, prop, value, poserr=None, negerr=None, ref=None):
     setit(properrsneg, errnegpath, negerr)
     setit(proprefs, refpath, ref)
 
+def addcol(colname):
+    """Add a column to the properties table. All values will be intialized as
+    NaN."""
+    pass
+
 def printprop(star, name):
     tbls = [props, properrsneg, properrspos, proprefs]
     x, en, ep, ref = [t[name][star] for t in tbls]
@@ -154,8 +159,8 @@ def props2csv(folder):
 # -----------------------------------------------------------------------------
 # AIRGLOW LINES
 
-airglow_path = os.path.join(root, 'airglow_lines.csv')
-airglow_lines = Table.read(airglow_path)
+airglow_path = os.path.join(root, 'airglow_ranges.csv')
+airglow_ranges = np.loadtxt(airglow_path, delimiter=',')
 
 # -----------------------------------------------------------------------------
 # SPECTRAL DATA ORGANIZATION
@@ -178,6 +183,8 @@ def validpath(name):
         band = name[0]
         folder = bandmap[band]
         path = os.path.join(datapath, folder, name)
+        if path[-4:] != 'fits':
+            path += '.fits'
         if not os.path.exists(path):
             raise IOError("Can't find file {} in the standard place ({})."
                           "".format(name, os.path.join(datapath, folder)))
