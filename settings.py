@@ -46,7 +46,7 @@ specstrings = ['x1d', 'mod_euv', 'mod_lya', 'spec', 'sx1', 'mod_phx', 'coadd']
 instruments = ['hst_cos_g130m','hst_cos_g160m','hst_sts_g430l','hst_sts_g430m',
                'hst_sts_g140m','hst_sts_e230m','hst_sts_e230h','hst_sts_g230l',
                'hst_cos_g230l','hst_sts_e140m','mod_gap_fill-','mod_euv_-----',
-               'xmm_mos_-----','mod_phx_-----','mod_lya_kevin']
+               'xmm_mos_-----','xmm_pn-_-----','mod_phx_-----','mod_lya_kevin']
 instvals = [2**i for i in range(len(instruments))]
 
 def getinststr(inst_val):

@@ -84,7 +84,7 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, silent=False):
             if not silent:
                 print ('trimming spectra in {} to the ranges {}'
                        ''.format(names[i], goodranges))
-            specs[i] = utils.keepranges(specs[i], goodranges)
+            specs[i] = utils.keepranges(specs[i], goodranges, ends='tight')
 
     # remove airglow lines from COS
     if not silent:
@@ -174,7 +174,8 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, silent=False):
     if not silent:
         print ('filling in any gaps with an order {} polynomial fit to an '
                'area {}x the gap width'.format(order, span))
-    spec = fill_gaps(spec, fill_with=order, fit_span=span, silent=silent)
+    spec = fill_gaps(spec, fill_with=order, fit_span=span, silent=silent,
+                     mingapR=10.0)
 
     # resample at constant R and dR
     if not silent:
@@ -231,13 +232,19 @@ def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False):
 
     #parse out the overlap
     overa, overb = utils.argoverlap(spectbla, spectblb, 'tight')
+    if np.sum(overa) == 0 or np.sum(overb) == 0:
+        if not silent:
+            print ('no full pixel overlap for at least one spectrum. can\'t '
+                   'normalize.')
+        return 1.0
 
     #if speca has all zero errors (it's a model), don't normalize to it
     if np.all(spectbla[overa]['error'] == 0.0):
         if not silent:
             print ('the master spectrum {} has all zero errors, so {} will '
                    'not be normalized to it'.format(*names))
-        return spectblb
+            return 1.0
+#        return spectblb
 
     #rebin to the coarser spectrum
     if np.sum(overa) < np.sum(overb):
@@ -299,7 +306,8 @@ def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False):
         if not silent:
             print ('{} > {}, so secondary will not be normalized to master'
                    ''.format(p, worry))
-        return spectblb
+        return 1.0
+#        return spectblb
     normfac = areas[0]/areas[1]
     if worry:
         normfacerr = sqrt((errors[0]/areas[1])**2 +
@@ -783,33 +791,33 @@ def auto_customspec(star, specfiles=None, silent=False):
             "".format(config))
 
 def rebin(spec, newbins):
-    """Rebin the spectrum, dealing with gaps in newbins if appropriate. An
-    exception is thrown if some newbins fall outside of spec."""
+    """Rebin the spectrum, dealing with gaps in newbins if appropriate."""
 
-    #split newbins up at gaps
-    w0, w1 = newbins.T
-    if ~np.allclose(w0[1:], w1[:-1]): #gaps in the new edges
-        splits = np.nonzero(~np.isclose(w0[1:], w1[:-1]))[0] + 1
-        splitbins = np.split(newbins, splits, 0)
-        specs = [rebin(spec, nb) for nb in splitbins]
-        return utils.vstack(specs)
-
-    # use only newbins that fall withing spec, warn if some don't
-    in0, in1 = [utils.specwhere(spec, w)[0] > 0 for w in newbins.T]
-    keep = in0 & in1
-    Nkeep = np.sum(keep)
+    # get overlapping bins, warn if some don't overlap
+    _, overnew = utils.argoverlap(spec, newbins, method='tight')
+    Nkeep = np.sum(overnew)
     if Nkeep == 0:
         warn('All newbins fall outside of spec. Returning empty spectrum.')
         return spec[0:0]
     if Nkeep < len(newbins):
         warn('Some newbins fall outside of spec and will be discarded.')
-        newbins = newbins[keep]
-        return rebin(spec, newbins)
+    newbins = newbins[overnew]
+
+    # split at gaps and rebin. no bins covering a gap in spec should remain in
+    # newbins, so there shouldn't be a need to split newgaps
+    splitbins = utils.gapsplit(newbins)
+    if len(splitbins) > 1:
+        specs = []
+        for bins in splitbins:
+            trim = utils.keepranges(spec, bins[0,0], bins[-1,1], ends='loose')
+            specs.append(rebin(trim, bins))
+        return utils.vstack(specs)
 
     # trim down spec to avoid gaps (gaps are handled in code block above)
     spec = utils.keepranges(spec, newbins[0,0], newbins[-1,1], ends='loose')
 
     #rebin
+    w0, w1 = newbins.T
     newedges = utils.bins2edges(newbins)
     oldedges = utils.wedges(spec)
     dwnew, dwold = map(np.diff, [newedges, oldedges])
@@ -936,7 +944,7 @@ def remove_line(spec, wavelength, fill_with=None, minclip=None, silent=False):
     return spec
 
 def fill_gaps(spec, fill_with=4, fit_span=10.0, fit_pts=None, resolution=None,
-              gapbins=None, silent=False):
+              mingapR=10.0, gapbins=None, silent=False):
     """
     Fill gaps in the spectrum with a polynomial fit to the continuum in an
     area encompassing the gap.
@@ -991,9 +999,16 @@ def fill_gaps(spec, fill_with=4, fit_span=10.0, fit_pts=None, resolution=None,
     comments = []
     for gr in gapranges:
         width = gr[1] - gr[0]
+        midpt = (gr[0] + gr[1]) / 2.0
+        gapR = midpt / width
+        if gapR < mingapR:
+            if not silent:
+                print ('gap from {:.2f}-{:.2f} has R = {:.1f} > {:.1f} = '
+                       'mingap, skipping'.format(gr[0], gr[1], gapR, mingapR))
+            gapspecs.append(spec[0:0])
+            continue
         if fit_pts is None:
             # confine spectrum to just fit_span around gap
-            midpt = (gr[0] + gr[1]) / 2.0
             radius = (fit_span * width) / 2.0
             wspan = [midpt - radius, midpt + radius]
             span = utils.argrange(spec, wspan)
@@ -1008,11 +1023,17 @@ def fill_gaps(spec, fill_with=4, fit_span=10.0, fit_pts=None, resolution=None,
 
             # also exclude zero-error (model) points
             span[spec['error'] <= 0.0] = False
+            # and points from a different instrument than abuts the gap, unless
+            # the gap is between data from two different instruments
+            inst1 = spec[spec['w0'] > midpt]['instrument'][0]
+            inst0 = spec[spec['w1'] < midpt]['instrument'][-1]
+            if inst0 == inst1:
+                span[spec['instrument'] != inst0] = False
 
             # try to filter out emission/absoprtion lines
             try:
                 flags = specutils.split(wbins[span], flux[span], error[span],
-                                        contfit=n)
+                                        contcut=1.7, linecut=1.7, contfit=n)
                 cont = (flags == 3)
                 wb, f, e = [a[span][cont] for a in [wbins, flux, error]]
                 if not silent:

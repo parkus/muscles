@@ -158,12 +158,15 @@ def vetpanspec(pan_or_star, constant_dw=None, redlim=8000.0):
     ymax = np.max(utils.keepranges(panspec, 3000.0, 8000.0)['flux'])
     plt.ylim(-0.01 * ymax, 1.05 * ymax)
 
-def vetnormfacs(star):
+def vetnormfacs(spec, panspec, normfac):
     """Check the normalization of files by plotting normalized and unnormalieze
-    versions."""
+    versions. Called from reduce.panspec"""
 
-    panspec = ml.io.read(db.panpath(star))[0]
-    lyaspec = ml.io.read(db.lyafile(star))[0]
+    panspec = io.read(db.panpath(star))[0]
+    sets = settings.load(star)
+
+    panfiles, _ = db.panfiles(star)
+    allspecs = io.read(panfiles)
 
     # find unique normfacs to figure out what has been normalized
     allnormfacs = panspec['normfac']
@@ -171,13 +174,78 @@ def vetnormfacs(star):
     normfacs = np.unique(normfacs)
 
     for normfac in normfacs:
+        # find the instrument and spectra that goes with that normfac
         index = np.nonzero(allnormfacs == normfac)[0][0]
         inst_no = panspec['instrument'][index]
         inst_str = settings.getinststr(inst_no)
-        specname = filter(lambda s: inst_str in s, panspec.meta['SOURCESPECS'])
-        line = specstep(s)
 
-    linenames = []
+        spec = filter(lambda s: inst_str in s.meta['NAME'], allspecs)
+        assert len(spec) == 1
+        spec = spec[0]
+
+        # find out if only specific ranges were used for normalizing
+        normranges = sets.get_norm_range(inst_str)
+        if normranges is None:
+            normranges = utils.gapless_ranges(spec)
+
+        # parse out other spectra that overlap the normranges and would be
+        # in panspec before normalization
+        def overlaps(s):
+            over = utils.overlapping(s, normranges)
+            other = inst_str not in s.meta['NAME']
+            notmodel = 'mod' not in s.meta['NAME']
+            return over and other and notmodel
+        otherspecs = filter(overlaps, allspecs)
+        names = [os.meta['NAME'] for os in otherspecs]
+
+        # get lowest res bins in overlap and ymax for plotting
+        overbins = utils.wbins(utils.keepranges(spec, normranges))
+        ymax = 0.0
+        for otherspec in otherspecs:
+            trimspec = utils.keepranges(spec, normranges)
+            otherbins = utils.wbins(trimspec)
+            if len(otherbins) < len(overbins):
+                overbins = otherbins
+            thismax = np.max(trimspec['flux'])
+            if thismax > ymax:
+                ymax = thismax
+
+        # rebin each spec to the lowest res within the overlap
+        def coarsebin(s):
+            overspec = red.rebin(s, overbins)
+            return red.splice(s, overspec)
+        spec = coarsebin(spec)
+        otherspecs = map(coarsebin, otherspecs)
+
+        # plot 'em
+        plt.figure()
+        plotit = lambda s: plotnorm(s, normranges, normfac)
+        lines = [plotit(spec)]
+        lines.extend(map(plotit, otherspecs))
+        plt.title('{} {} normalization'.format(star, inst_str))
+        plt.ylim(-0.05 * ymax, 1.05 * ymax)
+        plt.xlim(normranges[0, 0], normranges[-1, 1])
+
+        # add a legend
+        insts = [inst_str] + map(db.parse_instrument, names)
+        plt.legend(lines, insts)
+
+def plotnorm(spec, normranges, normfac, *args, **kwargs):
+    """Just plots a spectra, highlighting the ranges used for normalization and
+    showing the normalized and original versions. See vetnormfacs."""
+    trimspec = utils.keepranges(spec, normranges)
+    kwargs['err'] = False
+
+    line = specstep(spec, *args, alpha=0.5, linestyle=':', **kwargs)
+    kwargs['color'] = line.get_color()
+    specstep(trimspec, *args, linestyle=':', **kwargs)
+
+    spec['flux'] *= normfac
+    trimspec['flux'] *= normfac
+
+    specstep(spec, *args, alpha=0.5, **kwargs)
+    solidline = specstep(trimspec, *args, **kwargs)
+    return solidline
 
 def examinedates(star):
     """Plot the min and max obs dates to make sure everything looks peachy."""

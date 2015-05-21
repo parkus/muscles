@@ -13,6 +13,7 @@ from scipy.io import readsav as spreadsav
 import database as db
 import utils, settings
 from astropy.table import Table
+from astropy.time import Time
 from warnings import warn
 
 phoenixbase = 'ftp://phoenix.astro.physik.uni-goettingen.de/HiResFITS/PHOENIX-ACES-AGSS-COND-2011/'
@@ -105,26 +106,39 @@ def readfits(specfile):
         spectbls = [__trimHSTtbl(spectbl) for spectbl in spectbls]
 
     elif observatory == 'xmm':
-        colnames = ['Wavelength', 'BinWidth', 'Flux', 'FluxError', 'Flux2']
-        wmid, dw, cps, cpserr, flux = [spec[2].data[s][::-1] for s in colnames]
+        sh = spec[0].header
+        dw = 5.0
+        colnames = ['Wave', 'CFlux', 'CFlux_err']
+        wmid, flux, err = [spec[1].data[s] for s in colnames]
         #TODO: make sure to look this over regularly, as these files are likely
         #to grow and change
-        wepos, weneg = (wmid[:-1] + dw[:-1]), (wmid[1:] - dw[1:])
+        wepos, weneg = (wmid[:-1] + dw / 2.0), (wmid[1:] - dw / 2.0)
         if any(abs(wepos - weneg) > 0.01):
             raise ValueError('There are significant gaps in the XMM spectrum'
                              '\n{}'.format(path.basename(specfile)))
-        we = (wepos + weneg)/2.0
-        w0 = np.insert(we, 0, wmid[0] - dw[0])
-        w1 = np.append(we, wmid[-1] + dw[-1])
-        fluxfac = flux/cps
-        err = cpserr*fluxfac
-        N = len(w0)
-        expt, start, end = [np.nan*np.zeros(N)]*3
-        normfac = np.ones(N)
-        flags = np.zeros(N, 'i1')
-        source = np.ones(N)*insti
-        datas = [[w0,w1,flux,err,expt,flags,source,normfac,start,end]]
-        spectbls = [__maketbl(d, specfile) for d in datas]
+        # to ensure gaps aren't introduced due to slight errors...
+        we = (wepos + weneg) / 2.0
+        w0 = np.insert(we, 0, wmid[0] - dw)
+        w1 = np.append(we, wmid[-1] + dw)
+
+        optel = db.parse_spectrograph(specfile)
+        if optel == 'pn-':
+            expt = sh['spec_exptime_pn']
+            start = Time(sh['pn_date-obs']).mjd
+            end = Time(sh['pn_date-end']).mjd
+        if optel == 'mos':
+            expt = (sh['spec_exptime_mos1'] + sh['spec_exptime_mos2']) / 2.0
+            start1 = Time(sh['mos1_date-obs']).mjd
+            start2 = Time(sh['mos2_date-obs']).mjd
+            end1 = Time(sh['mos1_date-end']).mjd
+            end2 = Time(sh['mos2_date-end']).mjd
+            start = min([start1, start2])
+            end = max([end1, end2])
+
+        star = db.parse_star(specfile)
+        spectbls = [utils.vecs2spectbl(w0, w1, flux, err, expt,
+                                       instrument=insti, start=start, end=end,
+                                       star=star, filename=specfile)]
     else:
         raise Exception('fits2tbl cannot parse data from the {} observatory.'.format(observatory))
 

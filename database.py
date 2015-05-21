@@ -27,6 +27,7 @@ productspath = local + '/products'
 target_list = root + '/target_list.txt'
 observed_list = root + '/observed_list.txt'
 
+datafolders = ['x-ray', 'uv', 'visible', 'ir']
 bandmap = {'u':'uv', 'x':'x-ray', 'v':'visible', 'r':'ir'}
 
 # old PC
@@ -216,19 +217,6 @@ def choosesourcespecs(specfiles):
     #remove any non-spec files
     specfiles = filter(isspec, specfiles)
 
-    #for x1dsum files, get rid of any x1ds included in the x1dsum
-    xsums = filter(lambda s: 'x1dsum' in s, specfiles)
-    x1ds = filter(lambda s: 'x1d.fits' in s, specfiles)
-    if len(xsums) > 0:
-        hdrs = [fits.getheader(xs, 1) for xs in xsums]
-        rngs = [[h['expstart'], h['expend']] for h in hdrs]
-        rngs = sorted(rngs)
-        def covered(x1d):
-            start = fits.getval(x1d, 'expstart', 1)
-            return inranges(start, rngs, [1,1])
-        badx1ds = filter(covered, x1ds)
-        for bx in badx1ds: specfiles.remove(bx)
-
     return specfiles
 
 def sourcespecfiles(star, configstring):
@@ -260,12 +248,9 @@ def allspecfiles(star):
     using the file naming convention."""
     hasstar = lambda name: star in name
 
-    subfolders = [datapath]
-    contents = [os.path.join(datapath,p) for p in os.listdir(datapath)]
-    subfolders.extend(filter(os.path.isdir, contents))
-    subfolders = filter(lambda f: 'phoenix' not in f, subfolders)
+    folders = [os.path.join(datapath,p) for p in datafolders]
     files = []
-    for sf in subfolders:
+    for sf in folders:
         allfiles = os.listdir(sf)
         starfiles = filter(hasstar, allfiles)
         specfiles = filter(isspec, starfiles)

@@ -41,21 +41,6 @@ def isechelle(str_or_spectbl):
         name = str_or_spectbl.meta['FILENAME']
     return '_sts_e' in name
 
-def keepranges(spectbl, *args, **kwargs):
-    """Returns a table with only bins that are fully within the wavelength
-    ranges. *args can either be a Nx2 array of ranges or w0, w1. **kwargs
-    just for ends={'tight'|'loose'}"""
-    keep = argrange(spectbl, *args, **kwargs)
-    return spectbl[keep]
-
-def exportrange(spectbl, w0, w1, folder, overwrite=False):
-    piece = keepranges(spectbl, w0, w1)
-    name = path.basename(spectbl.meta['FILENAME'])
-    name = name.split('.')[0]
-    name += '_waverange {}-{}.fits'.format(w0,w1)
-    name = path.join(folder, name)
-    io.writefits(piece, name, overwrite=overwrite)
-
 def specwhere(spec, w):
     """Determine the splice locations where the wavelengths in w fall in the
     spectrum. Return a vecotr of flags specifying whether each w is outside the
@@ -134,7 +119,7 @@ def conform_spectbl(spectbl):
     return Table(cols, meta=meta)
 
 def vecs2spectbl(w0, w1, flux, err=0.0, exptime=0.0, flags=0, instrument=99,
-                 normfac=0.0, start=0.0, end=0.0, star='', filename='',
+                 normfac=1.0, start=0.0, end=0.0, star='', filename='',
                  name='', sourcespecs=[], comments=[]):
     """
     Assemble the vector data into the standard MUSCLES spectbl format.
@@ -212,67 +197,78 @@ def vstack(spectbls, name=''):
     return list2spectbl(data, star, name=name, sourcespecs=sourcespecs,
                         comments=comments)
 
-def gapsplit(spectbl):
-    gaps = (spectbl['w0'][1:] > spectbl['w1'][:-1])
+def gapsplit(spec_or_bins):
+    w0, w1 = __getw0w1(spec_or_bins)
+    if w0 is None:
+        return spec_or_bins
+    gaps = (w0[1:] > w1[:-1])
     isplit = list(np.nonzero(gaps)[0] + 1)
     isplit.insert(0, 0)
     isplit.append(None)
-    return [spectbl[i0:i1] for i0,i1 in zip(isplit[:-1], isplit[1:])]
+    return [spec_or_bins[i0:i1] for i0,i1 in zip(isplit[:-1], isplit[1:])]
 
-def overlapping(spectbla, spectblb):
+def overlapping(spec_or_bins_a, spec_or_bins_b):
     """Check if there is any overlap."""
-    wbinsa, wbinsb = map(wbins, [spectbla, spectblb])
+    getbins = lambda sob: sob if type(sob) is np.ndarray else wbins(sob)
+    wbinsa, wbinsb = map(getbins, [spec_or_bins_a, spec_or_bins_b])
     ainb0, ainb1 = [mnp.inranges(w, wbinsb, [0, 0]) for w in wbinsa.T]
     bina0, bina1 = [mnp.inranges(w, wbinsa, [0, 0]) for w in wbinsb.T]
     return np.any(ainb0 | ainb1) or np.any(bina0 | bina1)
 
-def argoverlap(spectbla, spectblb, method='tight'):
+def overlap_ranges(spec_or_bins_a, spec_or_bins_b,):
+    """Find the ranges over which two spectbls overlap."""
+    ar, br = map(gapless_ranges, [spec_or_bins_a, spec_or_bins_b])
+    return mnp.range_intersect(ar, br)
+
+def keepranges(spectbl, *args, **kwargs):
+    """Returns a table with only bins that are fully within the wavelength
+    ranges. *args can either be a Nx2 array of ranges or w0, w1. **kwargs
+    just for ends={'tight'|'loose'}"""
+    keep = argrange(spectbl, *args, **kwargs)
+    return spectbl[keep]
+
+def exportrange(spectbl, w0, w1, folder, overwrite=False):
+    piece = keepranges(spectbl, w0, w1)
+    name = path.basename(spectbl.meta['FILENAME'])
+    name = name.split('.')[0]
+    name += '_waverange {}-{}.fits'.format(w0,w1)
+    name = path.join(folder, name)
+    io.writefits(piece, name, overwrite=overwrite)
+
+def argoverlap(spec_or_bins_a, spec_or_bins_b, method='tight'):
     """ Find the (boolean) indices of the overlap of spectbla within spectblb
     and the reverse."""
-    if not overlapping(spectbla, spectblb):
-        raise ValueError('Spectra do not overlap.')
+    oranges = overlap_ranges(spec_or_bins_a, spec_or_bins_b)
 
-    #make edge vectors, recording gap locations
-    (ea, igapsa), (eb, igapsb) = map(gappyedges, [spectbla, spectblb])
-
-    ao = __getoverlap(eb, ea, igapsb, igapsa, method)
-    bo = __getoverlap(ea, eb, igapsa, igapsb, method)
+    ao, bo = [argrange(s, oranges, ends=method) for s in
+              [spec_or_bins_a, spec_or_bins_b]]
 
     return ao, bo
 
-def argrange(spectbl, *args, **kwargs):
-    """Return the boolean indices of the desired range. Inclusive."""
+def argrange(spec_or_bins, *args, **kwargs):
+    """Return the boolean indices of the desired range."""
+    w0, w1 = __getw0w1(spec_or_bins)
+    if w0 is None:
+        return np.empty(0)
+
     if 'ends' in kwargs:
         ends = kwargs['ends']
     else:
         ends = 'tight'
-    wrange = args[0] if len(args) == 1 else args
-    in0, in1 = [mnp.inranges(spectbl[s], wrange, [1, 1]) for s in ['w0', 'w1']]
-    if ends == 'tight':
-        return in0 & in1
-    if ends == 'loose':
-        return in0 | in1
+    wranges = args[0] if len(args) == 1 else args
+    wranges = np.array(wranges)
+    wranges = np.reshape(wranges, [wranges.size / 2, 2])
 
-def __getoverlap(ea, eb, igapsa, igapsb, method):
-    """Create boolean vector of overlap of b -- for use with argoverlap."""
-    #find overlap
-    overlap = mnp.binoverlap(ea, eb, method=method)
+    inrange = np.zeros(len(spec_or_bins), bool)
+    for wr in wranges:
+        if ends == 'loose':
+            in0, in1 = w0 < wr[1], w1 > wr[0]
+            inrange = inrange | (in0 & in1)
+        if ends == 'tight':
+            in0, in1 = w0 >= wr[0], w1 <= wr[1]
+            inrange = inrange | (in0 & in1)
 
-    #set values to false that are within gaps of a
-    g0, g1 = ea[igapsa - 1], ea[igapsa]
-    gaps = np.array([g0, g1]).T
-    if method == 'tight':
-        in0, in1 = map(mnp.inranges, [eb[:-1], eb[1:]], [gaps]*2, [[0,0]]*2)
-        ingap = (in0 | in1)
-    elif method == 'loose':
-        in0, in1 = map(mnp.inranges, [eb[:-1], eb[1:]], [gaps]*2, [[1,1]]*2)
-        ingap = (in0 & in1)
-    overlap[ingap] = False
-
-    #delete values that represent gaps in b
-    overlap = np.delete(overlap, igapsb)
-
-    return overlap
+    return inrange
 
 def gappyedges(spectbl):
     """Create a vector of bin edges with gaps included. Return the vector of
@@ -311,11 +307,10 @@ def fillgaps(spectbl, fill_value=np.nan):
     filledtbl.sort('w0')
     return filledtbl
 
-def gapless_ranges(spectbl_or_array):
-    if type(spectbl_or_array) is np.ndarray:
-        w0, w1 = spectbl_or_array.T
-    else:
-        w0, w1 = wbins(spectbl_or_array).T
+def gapless_ranges(spec_or_bins):
+    w0, w1 = __getw0w1(spec_or_bins)
+    if w0 is None:
+        return np.empty([0,2])
     gaps = np.nonzero(w0[1:] != w1[:-1])[0] + 1
     w0s, w1s = map(np.split, [w0, w1], [gaps, gaps])
     ranges = [[ww0[0], ww1[-1]] for ww0, ww1 in zip(w0s, w1s)]
@@ -339,3 +334,12 @@ def wbins(spectbl):
 
 def wedges(spectbl):
     return bins2edges(wbins(spectbl))
+
+def __getw0w1(spec_or_bins):
+    if len(spec_or_bins) == 0:
+        return None, None
+    if type(spec_or_bins) is np.ndarray:
+        w0, w1 = spec_or_bins.T
+    else:
+        w0, w1 = wbins(spec_or_bins).T
+    return w0, w1
