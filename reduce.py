@@ -12,7 +12,7 @@ import mypy.my_numpy as mnp
 from math import sqrt, ceil, log10
 from mypy import specutils
 import database as db
-import utils, io, settings
+import utils, io, settings, check
 from spectralPhoton.hst.convenience import x2dspec
 from itertools import combinations_with_replacement as combos
 from scipy.stats import norm
@@ -52,7 +52,8 @@ def theworks(star, R=10000.0, dw=1.0, silent=False):
     if not silent: print '\n\nstitching spectra together'
     panspectrum(star, R=R, dw=dw) #panspec and Rspec
 
-def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, silent=False):
+def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=True,
+                silent=False):
     """
     Coadd and splice the provided spectra into one panchromatic spectrum
     sampled at the native resolutions and constant R.
@@ -141,6 +142,9 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, silent=False):
             else:
                 normspec = utils.keepranges(addspec, normranges)
             normfac = normalize(spec, normspec, silent=silent)
+            # HACK: phx plot breaks things, so I'm just not doing it for now
+            if plotnorms and normfac != 1.0 and 'phx' not in name:
+                check.vetnormfacs(addspec, spec, normfac, normranges)
             addspec['flux'] *= normfac
             addspec['error'] *= normfac
             addspec['normfac'] = normfac
