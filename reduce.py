@@ -198,6 +198,20 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=True,
 
     return spec,Rspec,dspec
 
+def solarspec(date):
+    """
+    Read and splice together ultraviolet and visible solar spectra. These
+    must be in the muscles/solar_data folder and appropriately named. This
+    means if you want new ones you need to get them using LASP solar data
+    portal thingy. Date format is yyyy-mm-dd.
+    """
+    ufile, vfile = db.solarfiles(date)
+    u, v = [io.readcsv(f)[0] for f in (ufile, vfile)]
+    w = 1850.0
+    u = split_exact(u, w, 'blue')
+    v = split_exact(v, w, 'red')
+    return utils.vstack([u, v])
+
 def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False):
     """
     Normalize the spectrum b to spectrum a.
@@ -1007,7 +1021,7 @@ def fill_gaps(spec, fill_with=4, fit_span=10.0, fit_pts=None, resolution=None,
         gapR = midpt / width
         if gapR < mingapR:
             if not silent:
-                print ('gap from {:.2f}-{:.2f} has R = {:.1f} > {:.1f} = '
+                print ('gap from {:.2f}-{:.2f} has R = {:.1f} < {:.1f} = '
                        'mingap, skipping'.format(gr[0], gr[1], gapR, mingapR))
             gapspecs.append(spec[0:0])
             continue

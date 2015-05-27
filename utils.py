@@ -166,8 +166,11 @@ def list2spectbl(datalist, star='', filename='', name='', sourcespecs=[],
     #make table
     cols = [Column(d,n,dt,description=dn,unit=u,format=f) for d,n,dt,dn,u,f in
             zip(datalist,colnames,dtypes,descriptions,units,fmts)]
-    if name == '' and filename != '':
-        name = db.parse_name(filename)
+    if filename != '':
+        if name == '':
+            name = db.parse_name(filename)
+        if star == '':
+            star = db.parse_star(filename)
     meta = {'FILENAME' : filename,
             'SOURCESPECS' : sourcespecs,
             'STAR' : star,

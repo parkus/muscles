@@ -6,9 +6,8 @@ Created on Fri Nov 07 15:51:54 2014
 """
 import os
 from astropy.io import fits
-from astropy.table import Table
 from pandas import read_pickle
-from mypy.my_numpy import midpts, inranges
+from mypy.my_numpy import midpts
 import numpy as np
 import io, settings
 from itertools import product as iterproduct
@@ -23,6 +22,7 @@ root = gdrive + '/Grad School/Phd Work/MUSCLES'
 local = '/Users/rolo7566/Datasets/MUSCLES'
 datapath = local + '/data'
 productspath = local + '/products'
+solarpath = root + '/solar_data'
 
 target_list = root + '/target_list.txt'
 observed_list = root + '/observed_list.txt'
@@ -306,6 +306,14 @@ def panfiles(star):
         lyafile = None
 
     return files, lyafile
+
+def solarfiles(date):
+    files = os.listdir(solarpath)
+    files = filter(lambda s: date in s, files)
+    ufile = filter(lambda s: 'u' == s[0], files)[0]
+    vfile = filter(lambda s: 'v' == s[0], files)[0]
+    ufile, vfile = [os.path.join(solarpath, f) for f in (ufile, vfile)]
+    return ufile, vfile
 
 def lyafile(star):
     """Find the file with the best Lya data for star."""

@@ -6,9 +6,10 @@ Created on Mon Nov 10 14:28:07 2014
 """
 
 from os import path
+import os
 from astropy.io import fits
 import numpy as np
-from mypy.my_numpy import mids2edges, block_edges
+from mypy.my_numpy import mids2edges, block_edges, midpts
 from scipy.io import readsav as spreadsav
 import database as db
 import utils, settings
@@ -48,16 +49,20 @@ def read(specfiles):
 
     specfiles = db.validpath(specfiles)
 
-    readfunc = {'fits' : readfits, 'txt' : readtxt, 'sav' : readsav}
+    readfunc = {'fits' : readfits, 'txt' : readtxt, 'sav' : readsav,
+                'csv' : readcsv}
     star = db.parse_star(specfiles)
     i = specfiles[::-1].find('.')
     fmt = specfiles[-i:]
     specs = readfunc[fmt](specfiles)
-    sets = settings.load(star)
-    if 'coadd' not in specfiles and 'custom' not in specfiles:
-        for config, i in sets.reject_specs:
-            if config in specfiles:
-                specs.pop(i)
+    try:
+        sets = settings.load(star)
+        if 'coadd' not in specfiles and 'custom' not in specfiles:
+            for config, i in sets.reject_specs:
+                if config in specfiles:
+                    specs.pop(i)
+    except IOError:
+        pass
     return specs
 
 def readstdfits(specfile):
@@ -151,27 +156,33 @@ def readtxt(specfile):
     Reads data from text files into standardized astropy table output.
     """
 
-    if 'mod_euv' in specfile.lower():
-        f = open(specfile)
-        wmid, iflux = [],[]
-        #move to the first line of data
-        while '-- WITH A SPECTRAL BREAKDOWN OF --' not in f.next(): continue
-        #read the data
-        for line in f:
-            wmid.append(float(line[8:22]))
-            iflux.append(float(line[22:39]))
-        #standardize
+    if 'young' in specfile.lower():
+        data = np.loadtxt(specfile)
+        wmid, f, e = data.T
         we = mids2edges(wmid)
         w0, w1 = we[:-1], we[1:]
-        flux = np.array(iflux)/(w1 - w0)
-        N = len(flux)
-        err = np.zeros(N)
-        expt,flags = np.zeros(N), np.zeros(N,'i1')
-        start, end = [np.zeros(N)]*2
-        normfac = np.ones(N)
-        source = db.getinsti(specfile)*np.ones(N)
-        data = [w0,w1,flux,err,expt,flags,source,normfac,start,end]
-        return [__maketbl(data, specfile)]
+        inst = db.getinsti(specfile)
+        spectbl = utils.vecs2spectbl(w0, w1, f, e, instrument=inst,
+                                     filename=specfile)
+        return [spectbl]
+    else:
+        raise Exception('A parser for {} files has not been implemented.'.format(specfile[2:9]))
+
+def readcsv(specfile):
+    if db.parse_observatory(specfile) in ['tmd', 'src']:
+        data = np.loadtxt(specfile, skiprows=1, delimiter=',')
+        wmid, f = data[:,1], data[:,2]
+        f *= 100.0 # convert W/m2/nm to erg/s/cm2/AA
+        wmid *= 10.0 # convert nm to AA
+        we = np.zeros(len(wmid) + 1)
+        we[1:-1] = midpts(wmid)
+        dw0, dw1 = wmid[1] - wmid[0], wmid[-1] - wmid[-2]
+        we[0], we[-1] = wmid[0] - dw0 / 2.0, wmid[-1] + dw1 / 2.0
+        w0, w1 = we[:-1], we[1:]
+        good = ~np.isnan(f)
+        w0, w1, f = w0[good], w1[good], f[good]
+        spectbl = utils.vecs2spectbl(w0, w1, f, filename=specfile)
+        return [spectbl]
     else:
         raise Exception('A parser for {} files has not been implemented.'.format(specfile[2:9]))
 
