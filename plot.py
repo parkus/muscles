@@ -4,13 +4,23 @@ Created on Wed Nov 19 12:11:41 2014
 
 @author: Parke
 """
-from numpy import array, arange
+
 import matplotlib.pyplot as plt
 from mypy.specutils import plot as specplot
 import io
 import database as db
 import utils
 import reduce
+import numpy as np
+
+stars = db.stars
+
+def texname(star):
+    with open(db.target_list_tex) as f:
+        texnames = f.read().splitlines()
+
+    i = stars.index(star)
+    return texnames[i]
 
 def plotrange(spectbl, w0, w1, *args, **kwargs):
     """
@@ -138,9 +148,9 @@ def specstep(spectbl, *args, **kwargs):
         ylbl = 'Flux [erg/s/cm$^2$/$\AA$]' if key == 'flux' else ''
 
     #parse data from table
-    w0, w1, f, e = array([spectbl[s] for s in ['w0','w1', key, 'error']])
+    w0, w1, f, e = np.array([spectbl[s] for s in ['w0','w1', key, 'error']])
 
-    wbins = array([w0, w1]).T
+    wbins = np.array([w0, w1]).T
 
     #plot flux
     fplt = specplot(wbins, f, *args, **kwargs)

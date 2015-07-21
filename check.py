@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-A collection of fucntions for visually inspecting the data and data products.
+A collection of functions for visually inspecting the data and data products.
 
 Created on Wed Dec 10 15:22:01 2014
 

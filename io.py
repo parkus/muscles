@@ -50,7 +50,7 @@ def read(specfiles):
     specfiles = db.validpath(specfiles)
 
     readfunc = {'fits' : readfits, 'txt' : readtxt, 'sav' : readsav,
-                'csv' : readcsv}
+                'csv' : readcsv, 'idlsav' : readsav}
     star = db.parse_star(specfiles)
     i = specfiles[::-1].find('.')
     fmt = specfiles[-i:]
@@ -191,8 +191,12 @@ def readsav(specfile):
     Reads data from IDL sav files into standardized astropy table output.
     """
     sav = spreadsav(specfile)
-    wmid = sav['w140']
-    flux = sav['lya_mod']
+    if 'mod_lya' in specfile:
+        wmid = sav['w140']
+        flux = sav['lya_mod']
+    elif 'sun' in specfile:
+        wmid = sav['wave'].squeeze() * 10 # nm to AA
+        flux = sav['flux'].squeeze() * 100 # W m-2 nm-2
     we = mids2edges(wmid, 'left', 'linear-x')
     w0, w1 = we[:-1], we[1:]
     N = len(flux)
@@ -345,6 +349,16 @@ def __trimHSTtbl(spectbl):
         return spectbl[~bad]
     else:
         return spectbl
+
+def write_simple_ascii(spectbl, name, key='flux', overwrite=False):
+    """
+    Write wavelength and a single spectbl column to an ascii file.
+    """
+
+    wmid = (spectbl['w0'] + spectbl['w1']) / 2.0
+    f = spectbl[key]
+    data = np.array([wmid, f]).T
+    np.savetxt(name, data)
 
 def writeMAST(spectbl, name, overwrite=False):
     """

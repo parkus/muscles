@@ -23,9 +23,11 @@ local = '/Users/rolo7566/Datasets/MUSCLES'
 datapath = local + '/data'
 productspath = local + '/products'
 solarpath = root + '/solar_data'
+photonpath = datapath + '/photons'
 
-target_list = root + '/target_list.txt'
-observed_list = root + '/observed_list.txt'
+target_list = root + '/share/target_list.txt'
+target_list_tex = root + '/share/target_list_tex.txt'
+observed_list = root + '/share/observed_list.txt'
 
 datafolders = ['x-ray', 'uv', 'visible', 'ir']
 bandmap = {'u':'uv', 'x':'x-ray', 'v':'visible', 'r':'ir'}
@@ -35,6 +37,14 @@ bandmap = {'u':'uv', 'x':'x-ray', 'v':'visible', 'r':'ir'}
 #productspath = r'C:\Users\Parke\Documents\Grad School\MUSCLES\Products'
 #codepath = r'C:\Users\Parke\Google Drive\Python\muscles'
 #root = r'C:\Users\Parke\Google Drive\Grad School\PhD Work\MUSCLES'
+
+
+with open(target_list) as f:
+    stars = f.read().splitlines()
+    stars = [s.replace('eps eri', 'v-eps-eri') for s in stars]
+
+with open(observed_list) as f:
+    observed = f.read().splitlines()
 
 # -----------------------------------------------------------------------------
 # PHOENIX DATABASE
@@ -100,6 +110,7 @@ def phxpath(star):
 # -----------------------------------------------------------------------------
 # STELLAR PROPERTIES DATABASE
 
+#FIXME: update to new scicat database
 proppath = os.path.join(root, 'star_properties.p')
 refpath = os.path.join(root, 'star_properties_references.p')
 errpospath = os.path.join(root, 'star_properties_errors_pos.p')
@@ -112,8 +123,6 @@ properrsneg = read_pickle(errnegpath)
 
 proptables = [props, proprefs, properrspos, properrsneg]
 proppaths = [proppath, refpath, errpospath, errnegpath]
-
-stars = list(props.index)
 
 def __setormask(tbl, path, star, prop, value):
     if value is None:
@@ -166,16 +175,19 @@ airglow_ranges = np.loadtxt(airglow_path, delimiter=',')
 # -----------------------------------------------------------------------------
 # SPECTRAL DATA ORGANIZATION
 
-def findfiles(path_or_band, *substrings):
+def findfiles(path_or_band, *substrings, **kwargs):
     """Look for a files in directory at path that contains ALL of the strings
-    in substrings in its filename."""
+    in substrings in its filename. Add fullpaths=True if desired."""
     if not os.path.exists(path_or_band):
         band = path_or_band if len(path_or_band) > 1 else bandmap[path_or_band]
         path_or_band = datapath + '/' + band
     def good(name):
         hasstring = [(s in name) for s in substrings]
         return all(hasstring)
-    return filter(good, os.listdir(path_or_band))
+    files = filter(good, os.listdir(path_or_band))
+    if 'fullpaths' in kwargs and kwargs['fullpaths'] == True:
+        files = [os.path.join(path_or_band, f) for f in files]
+    return files
 
 def validpath(name):
     if os.path.exists(name):
@@ -209,8 +221,8 @@ def configfiles(star, configstring):
     return filter(lambda f: configstring in f, allfiles)
 
 def choosesourcespecs(specfiles):
-    """Given a list of specfiles, select the best out of duplicated files and
-    remove custom coadds and extractions."""
+    """Given a list of specfiles, remove coadds and replace originals
+    with custom files."""
     #get rid of reduced files
     specfiles = filter(lambda s: not ('coadd' in s or 'custom' in s), specfiles)
 
@@ -220,7 +232,7 @@ def choosesourcespecs(specfiles):
     return specfiles
 
 def sourcespecfiles(star, configstring):
-    """Source (not coadd or custom) spectrum files that conatin configstring."""
+    """Source spectrum files that conatin configstring."""
     return choosesourcespecs(configfiles(star, configstring))
 
 def coaddfile(star, configstring):
@@ -240,6 +252,9 @@ def customfile(star, configstring):
         raise Exception('Multiple files found.')
     else:
         return f[0]
+
+def photonpath():
+    pass
 
 isspec = lambda name: any([s in name for s in settings.specstrings])
 
@@ -264,19 +279,16 @@ def allsourcefiles(star):
     allfiles = allspecfiles(star)
     return choosesourcespecs(allfiles)
 
-def coaddgroups(star, config=None, nosingles=False):
+def coaddgroups(star, nosingles=False):
     """Return a list of groups of files that should be coadded.
     Chooses the best source files and avoids dulicates."""
     allfiles = allsourcefiles(star)
+    allfiles = sub_customfiles(allfiles)
     filterfiles = lambda s: filter(lambda ss: s in ss, allfiles)
-    if config:
-        files = filterfiles(config)
     files = map(filterfiles, settings.instruments)
     files = filter(len, files)
     if nosingles:
         files = filter(lambda x: len(x) > 1, files)
-    if config:
-        files = files[0]
     return files
 
 def panfiles(star):
@@ -293,8 +305,8 @@ def panfiles(star):
     files = reduce(lambda x,y: x+y, files)
 
     #sub in custom extractions
-    files = sub_coaddfiles(files)
     files = sub_customfiles(files)
+    files = sub_coaddfiles(files)
 
     #parse out lya file
     lyafile = filter(lambda f: 'mod_lya' in f, files)
@@ -343,7 +355,7 @@ def parse_band(filename):
 def parse_star(filename):
     return parse_info(filename, 4, 5)
 def parse_id(filename):
-    return parse_info(filename, 0, 5)
+    return parse_info(filename, 0, 6)
 def parse_observatory(filename):
     return parse_info(filename, 1, 2)
 def parse_paninfo(filename):
@@ -416,6 +428,14 @@ def coaddpath(specpath):
     parts = specname.split('_')
     coaddname = '_'.join(parts[:5]) + '_coadd.fits'
     return os.path.join(specdir, coaddname)
+
+
+def photonpath(filepath):
+    fdir, fname = os.path.split(filepath)
+    rootdir, banddir = os.path.split(fdir)
+    root = parse_info(fname, 0, 5)
+    return os.path.join(rootdir, 'photons', root + '_photons.fits')
+
 
 def sub_coaddfiles(specfiles):
     """Replace any group of specfiles from the same instrument with a coadd
