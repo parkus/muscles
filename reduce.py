@@ -10,7 +10,7 @@ from astropy.table import Table
 from astropy.io import fits
 import mypy.my_numpy as mnp
 from math import sqrt, ceil, log10
-from mypy import specutils
+from mypy import specutils, statsutils
 import database as db
 import utils, io, settings, check
 from spectralPhoton.hst.convenience import x2dspec, specphotons
@@ -830,24 +830,14 @@ def auto_customspec(star, specfiles=None, silent=False):
             raise NotImplementedError("No custom extractions defined for {}"
                                       "".format(config))
 
+
 def auto_photons(star):
-    alltagfiles = db.findfiles('u', 'tag', star, fullpaths=True)
-    allx1dfiles = db.findfiles('u', 'x1d', star, fullpaths=True)
-    instruments = map(db.parse_instrument, alltagfiles)
-    instruments = list(set(instruments))
-    #FIXME: some echelle data have different numbers of orders, which the function for finding overlapping
-    instruments = filter(lambda s: 'cos' in s, instruments)
+    tagfiles = db.findfiles('u', 'tag', star, fullpaths=True)
+    x1dfiles = db.findfiles('u', 'x1d', star, fullpaths=True)
 
-    for instrument in instruments:
-        getInstFiles = lambda files: filter(lambda s: instrument in s, files)
-        tagfiles = getInstFiles(alltagfiles)
-        x1dfiles = getInstFiles(allx1dfiles)
-
-        f = db.photonpath(tagfiles[0])
-        specphotons(tagfiles, x1dfiles, fitsout=f, clobber=True)
-
-
-
+    for tf in tagfiles:
+        f = db.photonpath(tf)
+        specphotons([tf], x1dfiles, fitsout=f, clobber=True)
 
 
 def rebin(spec, newbins):
@@ -1163,6 +1153,70 @@ def fill_gaps(spec, fill_with=4, fit_span=10.0, fit_pts=None, resolution=None,
 
     return filledspec
 
+
+# FLARE STUFF
+# ===========
+def findflares(t0, t1, rate, sigma_cut=3.0, silent=True):
+    """
+    Return the start and stop time for all excursions (runs) from the median and flag the excursions that have areas
+    greater than sigma_cut from the mean. Takes a smoothed curve, not a regular lightcurve.
+    """
+    dt = np.append(np.diff(t0), t1[-1]-t1[-2])
+    metric = lambda x: dt*x
+    clean = statsutils.clean(rate, sigma_cut, metric=metric, test='sigma clip', trendfit='median',
+                             printsteps=(not silent))
+
+    med = np.median(rate[clean])
+    dev = rate - med
+    splits = mnp.runslices(dev)
+    t = (t0 + t1) / 2.0
+    tmid = mnp.midpts(t)
+    tsplits = tmid[splits - 1]
+
+    beg = np.insert(tsplits, 0, t[0])
+    end = np.append(tsplits, t[-1])
+
+    # flag intervals as flare if they have none to a few clean points
+    # compute fraction of points in each interval that are clean
+    frac_clean = mnp.splitsum(clean, splits) / mnp.splitsum(np.ones(len(rate)), splits)
+    flare = frac_clean < 0.1
+    assert not np.any((frac_clean > 0.1) & (frac_clean < 0.9))
+
+    return beg, end, flare
+
+
+def computePEWS(fitsphotons, begs, ends, flares, waveranges):
+    """
+    Compute photometric equivalent widths for the regions defined by begs and ends (in MJD), excluding those flagged
+    as flares when computing the mean rate.
+    """
+
+    # keep weight and time info for only the photons we want
+    t, w, eps = [fitsphotons['events'].data[s] for s in ['time', 'wavelength', 'epsilon']]
+    keep = mnp.inranges(w, waveranges)
+    t, eps = t[keep], eps[keep]
+
+    # compute mean rate
+    cleanranges = np.array([begs[~flares], ends[~flares]])
+    ttotal = np.sum(cleanranges[1] - cleanranges[0])
+    keep = mnp.inranges(t, cleanranges)
+    mnrate = np.sum(np.sum(eps[keep])) / ttotal
+
+    # figure out where time bin edges fit in photons
+    i0 = np.searchsorted(t, begs)
+    i1 = np.searchsorted(t, ends)
+
+    # for each bin, compute PEW
+    epssum = np.insert(np.cumsum(eps), 0, 0.0)
+    assert epssum[-1] < 1e308 # otherwise I shouldn't use cumsum
+    totals = epssum[i1] - epssum[i0]
+    PEWs = totals / mnrate
+
+    return PEWs
+
+
+def auto_flares():
+    pass
 
 def __inrange(spectbl, wr):
     in0, in1 = [mnp.inranges(spectbl[s], wr) for s in ['w0', 'w1']]
