@@ -1219,7 +1219,9 @@ def computePEWS(fitsphotons, begs, ends, flares, waveranges):
     epssum = np.insert(np.cumsum(eps), 0, 0.0)
     assert epssum[-1] < 1e308 # otherwise I shouldn't use cumsum
     totals = epssum[i1] - epssum[i0]
-    PEWs = totals / mnrate
+    dts = ends - begs
+    rates = totals / dts
+    PEWs = (rates - mnrate) / mnrate * dts
 
     return PEWs
 
