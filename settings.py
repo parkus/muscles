@@ -41,6 +41,9 @@ prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m', 'sts_g430l',
 
 lyacut = [1208.0, 1222.0]
 
+flare_ranges = {'cos_g130m' : [[1169.5 , 1198.5 ], [1201.7 , 1212.17], [1219.17, 1271.19], [1324.83, 1426.08]],
+                'cos_g160m' : [[1422.92, 1563.85], [1614.02, 1754.01]]}
+
 specstrings = ['x1d', 'mod_euv', 'mod_lya', 'spec', 'sx1', 'mod_phx', 'coadd']
 #listed in normalization order
 instruments = ['hst_cos_g130m','hst_cos_g160m','hst_sts_g430l','hst_sts_g430m',
