@@ -832,12 +832,20 @@ def auto_customspec(star, specfiles=None, silent=False):
 
 
 def auto_photons(star):
-    tagfiles = db.findfiles('u', 'tag', star, fullpaths=True)
-    x1dfiles = db.findfiles('u', 'x1d', star, fullpaths=True)
+    alltagfiles = db.findfiles('u', 'tag', star, fullpaths=True)
+    allx1dfiles = db.findfiles('u', 'x1d', star, fullpaths=True)
+    instruments = map(db.parse_instrument, alltagfiles)
+    instruments = list(set(instruments))
+    #FIXME: some echelle data have different numbers of orders, which the function for finding overlapping
+    instruments = filter(lambda s: 'cos' in s, instruments)
 
-    for tf in tagfiles:
-        f = db.photonpath(tf)
-        specphotons([tf], x1dfiles, fitsout=f, clobber=True)
+    for instrument in instruments:
+        getInstFiles = lambda files: filter(lambda s: instrument in s, files)
+        tagfiles = getInstFiles(alltagfiles)
+        x1dfiles = getInstFiles(allx1dfiles)
+
+        f = db.photonpath(tagfiles[0])
+        specphotons(tagfiles, x1dfiles, fitsout=f, clobber=True)
 
 
 def rebin(spec, newbins):
