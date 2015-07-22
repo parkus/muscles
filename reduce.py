@@ -14,6 +14,7 @@ from mypy import specutils, statsutils
 import database as db
 import utils, io, settings, check
 from spectralPhoton.hst.convenience import x2dspec, specphotons
+from spectralPhoton.functions import smooth_curve
 from itertools import combinations_with_replacement as combos
 from scipy.stats import norm
 from warnings import warn
@@ -1200,19 +1201,19 @@ def computePEWS(fitsphotons, begs, ends, flares, waveranges):
     """
 
     # keep weight and time info for only the photons we want
-    t, w, eps = [fitsphotons['events'].data[s] for s in ['time', 'wavelength', 'epsilon']]
+    mjd, w, eps = [fitsphotons['events'].data[s] for s in ['mjd', 'wavelength', 'epsilon']]
     keep = mnp.inranges(w, waveranges)
-    t, eps = t[keep], eps[keep]
+    mjd, eps = mjd[keep], eps[keep]
 
     # compute mean rate
     cleanranges = np.array([begs[~flares], ends[~flares]])
     ttotal = np.sum(cleanranges[1] - cleanranges[0])
-    keep = mnp.inranges(t, cleanranges)
+    keep = mnp.inranges(mjd, cleanranges)
     mnrate = np.sum(np.sum(eps[keep])) / ttotal
 
     # figure out where time bin edges fit in photons
-    i0 = np.searchsorted(t, begs)
-    i1 = np.searchsorted(t, ends)
+    i0 = np.searchsorted(mjd, begs)
+    i1 = np.searchsorted(mjd, ends)
 
     # for each bin, compute PEW
     epssum = np.insert(np.cumsum(eps), 0, 0.0)
@@ -1223,8 +1224,36 @@ def computePEWS(fitsphotons, begs, ends, flares, waveranges):
     return PEWs
 
 
-def auto_flares():
-    pass
+def auto_flares(star, silent=False):
+    pfs = db.findfiles('photons', star, fullpaths=True)
+    flare_bands = settings.flare_bands
+    for pf in pfs:
+        inst = db.parse_instrument(pf)
+        if inst in flare_bands:
+            ph = fits.open(pf)
+            nexp = len(ph['gti'].data['obsids'])
+            mjd, w, eps, exp = [ph['events'].data[s] for s in ['mjd', 'wavelength', 'epsilon', 'expno']]
+            bands = flare_bands[inst]
+            curves = []
+            for i in range(nexp):
+                ii = (exp == i)
+                curves.append(smooth_curve(mjd[ii], w[ii], eps[ii], 100, bands=bands))
+
+            t0, t1, cps = map(np.hstack, zip(*curves)[:3])
+            begs, ends, flares = findflares(t0, t1, cps, silent=silent)
+
+            pews = computePEWS(ph, begs, ends, flares, bands) * 24 * 3600 # convert from MJD
+
+            data = [begs, ends, pews, flares],
+            names = ['start', 'stop', 'PEW', 'flare']
+            units = ['mjd', 'mjd', 's', '']
+            descriptions = ['start time of excursion', 'end time of excursion', 'photometric equivalent width',
+                            'excursion flagged as a flare']
+            flareTable = Table()
+            for d, n, u, dc in zip(data, names, units, descriptions):
+                flareTable[n] = Table.Column(d, n, unit=u, description=d)
+            flareTable.write(db.photonpath(pf))
+
 
 def __inrange(spectbl, wr):
     in0, in1 = [mnp.inranges(spectbl[s], wr) for s in ['w0', 'w1']]
