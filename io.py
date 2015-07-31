@@ -6,7 +6,6 @@ Created on Mon Nov 10 14:28:07 2014
 """
 
 from os import path
-import os
 from astropy.io import fits
 import numpy as np
 from mypy.my_numpy import mids2edges, block_edges, midpts
@@ -18,6 +17,33 @@ from astropy.time import Time
 from warnings import warn
 
 phoenixbase = 'ftp://phoenix.astro.physik.uni-goettingen.de/HiResFITS/PHOENIX-ACES-AGSS-COND-2011/'
+
+
+def readphotons(star, inst):
+    pf = db.findfiles('photons', star, 'cos_g130m', fullpaths=True)
+    assert len(pf) == 1
+    ph = fits.open(pf[0])
+    return ph, ph['events'].data
+
+
+def readFlareTbl(star, inst, label):
+    tblfile = db.findfiles(db.flaredir, star, inst, label, 'flares', fullpaths=True)
+    assert len(tblfile) == 1
+    tbl = Table.read(tblfile[0])
+
+    w0, w1 = [], []
+    i = 0
+    while True:
+        istr = str(i)
+        if 'BANDBEG' + str(i) not in tbl.meta:
+            break
+        w0.append(tbl.meta['BANDBEG' + istr])
+        w1.append(tbl.meta['BANDEND' + istr])
+        i += 1
+    bands = np.array(zip(w0, w1))
+
+    return Table.read(tblfile[0]), bands
+
 
 def readpans(star):
     """
