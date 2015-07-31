@@ -23,7 +23,10 @@ local = '/Users/rolo7566/Datasets/MUSCLES'
 datapath = local + '/data'
 productspath = local + '/products'
 solarpath = root + '/solar_data'
-photonpath = datapath + '/photons'
+photondir = datapath + '/photons'
+flaredir = productspath + '/flare_catalogs'
+proppath = root + '/share/starprops'
+moviepath = productspath + '/movies'
 
 target_list = root + '/share/target_list.txt'
 target_list_tex = root + '/share/target_list_tex.txt'
@@ -106,65 +109,6 @@ def phxpath(star):
     """Standard name for interpolated phoenix spectrum."""
     name = 'r_mod_phx_-----_{}_interpolated.fits'.format(star)
     return os.path.join(datapath, 'ir', name)
-
-# -----------------------------------------------------------------------------
-# STELLAR PROPERTIES DATABASE
-
-#FIXME: update to new scicat database
-proppath = os.path.join(root, 'star_properties.p')
-refpath = os.path.join(root, 'star_properties_references.p')
-errpospath = os.path.join(root, 'star_properties_errors_pos.p')
-errnegpath = os.path.join(root, 'star_properties_errors_neg.p')
-
-props = read_pickle(proppath)
-proprefs = read_pickle(refpath)
-properrspos =read_pickle(errpospath)
-properrsneg = read_pickle(errnegpath)
-
-proptables = [props, proprefs, properrspos, properrsneg]
-proppaths = [proppath, refpath, errpospath, errnegpath]
-
-def __setormask(tbl, path, star, prop, value):
-    if value is None:
-        isstr = isinstance(tbl[prop][star], basestring)
-        tbl[prop][star] = '' if isstr else np.nan
-    else:
-        tbl[prop][star] = value
-    tbl.to_pickle(path)
-
-def setprop(star, prop, value, poserr=None, negerr=None, ref=None):
-    setit = lambda tbl, path, value: __setormask(tbl, path, star, prop, value)
-    setit(props, proppath, value)
-    setit(properrspos, errpospath, poserr)
-    setit(properrsneg, errnegpath, negerr)
-    setit(proprefs, refpath, ref)
-
-def addcol(colname):
-    """Add a column to the properties table. All values will be intialized as
-    NaN."""
-    pass
-
-def printprop(star, name):
-    tbls = [props, properrsneg, properrspos, proprefs]
-    x, en, ep, ref = [t[name][star] for t in tbls]
-    if ref == '': ref = 'no reference'
-    print '{:f} -{:f} +{:f}\t{}'.format(x, en, ep, ref)
-
-def phxinput(star):
-    Teff = props['Teff'][star]
-    kwds = {}
-    for key in ['logg', 'FeH', 'aM']:
-        x = props[key][star]
-        if ~np.isnan(x):
-            kwds[key] = x
-    return Teff, kwds
-
-def props2csv(folder):
-    for tbl, path in zip(proptables, proppaths):
-        path = os.path.basename(path)
-        csvpath = path.replace('.p', '.csv')
-        csvpath = os.path.join(folder, csvpath)
-        tbl.to_csv(csvpath)
 
 # -----------------------------------------------------------------------------
 # AIRGLOW LINES
@@ -253,8 +197,6 @@ def customfile(star, configstring):
     else:
         return f[0]
 
-def photonpath():
-    pass
 
 isspec = lambda name: any([s in name for s in settings.specstrings])
 
@@ -432,9 +374,17 @@ def coaddpath(specpath):
 
 def photonpath(filepath):
     fdir, fname = os.path.split(filepath)
-    rootdir, banddir = os.path.split(fdir)
+    rootdir, _ = os.path.split(fdir)
     root = parse_info(fname, 0, 5)
     return os.path.join(rootdir, 'photons', root + '_photons.fits')
+
+
+def flarepath(star, inst, label):
+    inst = filter(lambda s: inst in s, settings.instruments)
+    assert len(inst) == 1
+    inst = inst[0]
+    name = '_'.join([inst, star, label, 'flares'])
+    return os.path.join(flaredir, name + '.fits')
 
 
 def sub_coaddfiles(specfiles):
