@@ -6,7 +6,7 @@ Created on Mon Oct 20 15:42:13 2014
 """
 
 import numpy as np
-from astropy.table import Table
+from astropy.table import Table, vstack
 from astropy.io import fits
 import mypy.my_numpy as mnp
 from math import sqrt, ceil, log10
@@ -14,10 +14,11 @@ from mypy import specutils, statsutils
 import database as db
 import utils, io, settings, check
 from spectralPhoton.hst.convenience import x2dspec, specphotons
-from spectralPhoton.functions import smooth_curve
+import spectralPhoton.functions as sp
 from itertools import combinations_with_replacement as combos
 from scipy.stats import norm
 from warnings import warn
+import scicatalog.scicatalog as sc
 
 colnames = settings.spectbl_format['colnames']
 airglow_ranges = db.airglow_ranges
@@ -1165,96 +1166,239 @@ def fill_gaps(spec, fill_with=4, fit_span=10.0, fit_pts=None, resolution=None,
 
 # FLARE STUFF
 # ===========
-def findflares(t0, t1, rate, sigma_cut=3.0, silent=True):
+def findflares(curveList, flagfactor=1.0, silent=True):
     """
-    Return the start and stop time for all excursions (runs) from the median and flag the excursions that have areas
-    greater than sigma_cut from the mean. Takes a smoothed curve, not a regular lightcurve.
+    Return the start and stop time for all excursions (runs) from the median. Flag the excursions that have areas
+    flagfactor greater than the mean. Takes a smoothed curve (t0, t1, rate, err), not a regular lightcurve.
     """
-    dt = np.append(np.diff(t0), t1[-1]-t1[-2])
-    metric = lambda x: dt*x
-    clean = statsutils.clean(rate, sigma_cut, metric=metric, test='sigma clip', trendfit='median',
-                             printsteps=(not silent))
 
-    med = np.median(rate[clean])
-    dev = rate - med
-    splits = mnp.runslices(dev)
-    t = (t0 + t1) / 2.0
-    tmid = mnp.midpts(t)
-    tsplits = tmid[splits - 1]
+    ns = [len(curve[0]) for curve in curveList]
+    expends = list(np.cumsum(ns))
+    expstarts = [0] + expends[:-1]
+    t0s, t1s, rates = map(np.hstack, zip(*curveList)[:3])
+    ts = (t0s + t1s) / 2.0
+    clean = np.ones(len(rates), bool)
+    count = 0
+    while True:
+        if count > 1000:
+            break
+        normrates = rates - np.median(rates[clean])
+        runSliceList, areaList, begList, endList = [], [], [], []
+        for i0, i1 in zip(expstarts, expends):
+            t, t0, t1, normrate = [a[i0:i1] for a in [ts, t0s, t1s, normrates]]
+            runslices = mnp.runslices(normrate)
+            tslices = (t[runslices-1] + t[runslices]) / 2.0
+            beg = np.insert(tslices, 0.0, t0[0])
+            end = np.append(tslices, t1[-1])
+            assert np.all((end - beg) > 0)
+            begList.append(beg)
+            endList.append(end)
+            runSliceList.append(runslices + i0)
 
-    beg = np.insert(tsplits, 0, t[0])
-    end = np.append(tsplits, t[-1])
+            # add slice between exposures
+            runSliceList.append(i1)
 
-    # flag intervals as flare if they have none to a few clean points
-    # compute fraction of points in each interval that are clean
-    frac_clean = mnp.splitsum(clean, splits) / mnp.splitsum(np.ones(len(rate)), splits)
-    flare = frac_clean < 0.1
-    assert not np.any((frac_clean > 0.1) & (frac_clean < 0.9))
+            dt = np.append(np.diff(t0), t1[-1]-t1[-2])
+            areas = normrate * dt
+            areaList.append(mnp.splitsum(areas, runslices))
 
-    return beg, end, flare
+        runslices, areas, begs, ends = map(np.hstack, [runSliceList, areaList, begList, endList])
+        runslices = np.insert(runslices, 0, 0)
+
+        flare = areas > -(flagfactor * areas.min())
+        oldclean = clean
+        clean = np.ones(len(rates), bool)
+        for i in np.nonzero(flare)[0]:
+            i0, i1 = runslices[[i, i+1]]
+            clean[i0:i1] = False
+
+        if np.all(clean == oldclean):
+            break
+
+    # clean out any beginnings that
+
+    return begs, ends, flare
 
 
-def computePEWS(fitsphotons, begs, ends, flares, waveranges):
+def computeFlareStats(fitsphotons, begs, ends, flares, waveranges, dist):
     """
-    Compute photometric equivalent widths for the regions defined by begs and ends (in MJD), excluding those flagged
-    as flares when computing the mean rate.
+    Compute photometric equivalent widths and absolute energies for the regions defined by begs and ends (in s,
+    referenced to MJD0 in fitsphotons) excluding those flagged as flares when computing the mean rate. dist in pc.
     """
 
     # keep weight and time info for only the photons we want
-    mjd, w, eps = [fitsphotons['events'].data[s] for s in ['mjd', 'wavelength', 'epsilon']]
-    keep = mnp.inranges(w, waveranges)
-    mjd, eps = mjd[keep], eps[keep]
+    photons = fitsphotons['events'].data
+    keep = mnp.inranges(photons['wavelength'], waveranges)
+    photons = photons[keep]
 
-    # compute mean rate
+    # compute mean rate and flux
     cleanranges = np.array([begs[~flares], ends[~flares]])
-    ttotal = np.sum(cleanranges[1] - cleanranges[0])
-    keep = mnp.inranges(mjd, cleanranges)
-    mnrate = np.sum(np.sum(eps[keep])) / ttotal
+    ttotal = np.sum(cleanranges[1] - cleanranges[0]) # s
+    keep = mnp.inranges(photons['time'], cleanranges)
+    mnrate = np.sum(photons[keep]['epsilon']) / ttotal # cnts s-1
+    mnflux = np.sum(photons[keep]['epera']) / ttotal # erg s-1 cm-2
 
     # figure out where time bin edges fit in photons
-    i0 = np.searchsorted(mjd, begs)
-    i1 = np.searchsorted(mjd, ends)
+    i0 = np.searchsorted(photons['time'], begs)
+    i1 = np.searchsorted(photons['time'], ends)
 
     # for each bin, compute PEW
-    epssum = np.insert(np.cumsum(eps), 0, 0.0)
+    epssum = np.insert(photons['epsilon'].cumsum(), 0, 0.0)
     assert epssum[-1] < 1e308 # otherwise I shouldn't use cumsum
     totals = epssum[i1] - epssum[i0]
     dts = ends - begs
     rates = totals / dts
     PEWs = (rates - mnrate) / mnrate * dts
+    assert np.all(np.isfinite(PEWs))
 
-    return PEWs
+    # multiply by mean luminosity to get absolute flare energy
+    dist = dist * 3.08567758e18 # pc to cm
+    mnlum = mnflux * 4 * np.pi * dist**2
+    Es = PEWs * mnlum
+
+    PEWratios = np.abs(PEWs / PEWs.min())
+
+    return PEWs, Es, PEWratios
 
 
-def auto_flares(star, silent=False):
-    pfs = db.findfiles('photons', star, fullpaths=True)
-    flare_bands = settings.flare_bands
-    for pf in pfs:
-        inst = db.parse_instrument(pf)
-        if inst in flare_bands:
-            ph = fits.open(pf)
-            nexp = len(ph['gti'].data['obsids'])
-            mjd, w, eps, exp = [ph['events'].data[s] for s in ['mjd', 'wavelength', 'epsilon', 'expno']]
-            bands = flare_bands[inst]
-            curves = []
-            for i in range(nexp):
-                ii = (exp == i)
-                curves.append(smooth_curve(mjd[ii], w[ii], eps[ii], 100, bands=bands))
+def cumfreq(PEWs, exptime):
+    """
+    Compute cumulative flare frequency given PEWs of detected flares within total exposure time exptime [s].
+    """
+    isort = np.argsort(PEWs)[::-1]
+    cfs = np.zeros(len(PEWs))
+    cfs[isort] = (np.arange(len(PEWs)) + 1.0) / (exptime/3600.0/24.0)
+    return cfs
 
-            t0, t1, cps = map(np.hstack, zip(*curves)[:3])
-            begs, ends, flares = findflares(t0, t1, cps, silent=silent)
 
-            pews = computePEWS(ph, begs, ends, flares, bands) * 24 * 3600 # convert from MJD
+def auto_flares(star, bands, inst, label, dt=1.0, silent=False):
 
-            data = [begs, ends, pews, flares],
-            names = ['start', 'stop', 'PEW', 'flare']
-            units = ['mjd', 'mjd', 's', '']
-            descriptions = ['start time of excursion', 'end time of excursion', 'photometric equivalent width',
-                            'excursion flagged as a flare']
-            flareTable = Table()
-            for d, n, u, dc in zip(data, names, units, descriptions):
-                flareTable[n] = Table.Column(d, n, unit=u, description=d)
-            flareTable.write(db.photonpath(pf))
+    ph, photons = io.readphotons(star, inst)
+
+    nexp = len(ph['gti'].data['obsids'])
+    expt = ph[0].header['EXPTIME']
+
+    curves = []
+    groups = [range(len(bands))]
+    for i in range(nexp):
+        ii = (photons['expno'] == i)
+        curve = sp.spectral_curves(photons['time'][ii], photons['wavelength'][ii], eps=photons['epsilon'][ii],
+                                   tbins=dt, bands=bands, groups=groups)
+        tedges, cps, err = zip(*curve)[0]
+        t0, t1 = tedges[:-1], tedges[1:]
+        curves.append([t0, t1, cps, err])
+
+    begs, ends, flares = findflares(curves, silent=silent)
+
+    dist = sc.quickval(db.proppath, star, 'dist')
+    pews, Es, pewratios = computeFlareStats(ph, begs, ends, flares, bands, dist)
+
+    assert pews.min() < 0
+
+    cfs = cumfreq(pews, expt)
+
+    data = [begs, ends, pews, flares, cfs, Es, pewratios]
+    names = ['start', 'stop', 'PEW', 'flare', 'cumfreq', 'energy', 'PEWratio']
+    units = ['s', 's', 's', '', 'd-1', 'erg', '']
+    descriptions = ['start time of excursion referenced to MJD0', 'end time of excursion referenced to MJD0',
+                    'photometric equivalent width', 'excursion flagged as a flare', 'cumulative frequency of '
+                    'flares of >= PEW', 'absolute energy radiated by flare in band',
+                    'ratio of the PEW to the minimum PEW measured in the lightcurve']
+    cols = []
+    for d, n, u, dc in zip(data, names, units, descriptions):
+        cols.append(Table.Column(d, n, unit=u, description=dc))
+    flareTable = Table(cols)
+    flareTable.meta['STAR'] = star
+    flareTable.meta['EXPTIME'] = expt
+    flareTable.meta['MJD0'] = ph[0].header['MJD0']
+
+    for i, (w0, w1) in enumerate(bands):
+        key0, key1 = 'bandbeg{}'.format(i), 'bandend{}'.format(i)
+        flareTable.meta[key0] = w0
+        flareTable.meta[key1] = w1
+
+    flareTable.write(db.flarepath(star, inst, label), format='fits', overwrite=True)
+
+
+def combine_flarecats(band, inst, stars='all'):
+    fs = db.findfiles(db.flaredir, inst, band, 'flares', fullpaths=True)
+    if stars != 'all':
+        hasStar = lambda f: any([s in f for s in stars])
+        fs = filter(hasStar, fs)
+
+    # group by instrument
+    insts = set(map(db.parse_instrument, fs))
+
+    tbls = []
+    expt = 0.0
+    for f in fs:
+        star = db.parse_info(f, 3, 4)
+        flareTable = Table.read(f, format='fits')
+        expt += flareTable.meta['EXPTIME']
+
+        # change begs and ends to mjd
+        mjd0 = flareTable.meta['MJD0']
+        flareTable['start'] = flareTable['start']/24.0/3600.0 + mjd0
+        flareTable['stop'] = flareTable['stop']/24.0/3600.0 + mjd0
+        flareTable['start'].unit, flareTable['stop'].unit = 'mjd', 'mjd'
+
+        # cull non-flares
+        keep = flareTable['flare']
+        flareTable = flareTable[keep]
+
+        # add some columns specific to table and delete metadata that will cause conflicts
+        n = len(flareTable)
+        band = db.parse_info(f, 4, 5)
+        flareTable['inst'] = Table.Column([inst]*n, description='instrument', unit='', dtype=str)
+        flareTable['star'] = Table.Column([star]*n, unit='', dtype=str)
+        flareTable['bandname'] = Table.Column([band]*n, unit='', dtype=str)
+        del flareTable.meta['EXPTIME']   # otherwise produces a merge conflict later
+        del flareTable.meta['MJD0']
+        del flareTable.meta['STAR']
+        del flareTable['flare']
+        tbls.append(flareTable)
+
+    # compute cum. freq. of flare PEWs for all stars
+    tbl = vstack(tbls)
+    tbl.sort('PEW')
+    tbl.reverse()
+    tbl.meta['EXPTIME'] = expt
+    tbl['cumfreqPEW'] = cumfreq(tbl['PEW'], expt)
+    tbl['cumfreqPEW'].description = 'cumuluative frequency of all flares with >= PEW for the instrument'
+    tbl['cumfreqE'] = cumfreq(tbl['energy'], expt)
+    tbl['cumfreqE'].description = 'cumuluative frequency of all flares with >= energy for the instrument'
+    tbl['cumfreqPEW'].unit = tbl['cumfreqE'].unit = 'd-1'
+
+    return tbl
+
+
+def auto_curve(star, inst, bands, dt, appx=True, groups=None, fluxed=False):
+    ph, photons = io.readphotons(star, inst)
+
+    # make bins
+    gtis = ph['gti'].data
+    tbinList = []
+    for t0, t1 in zip(gtis['start'], gtis['stop']):
+        if appx:
+            n = round((t1 - t0) / dt)
+            tbinList.append(np.linspace(t0, t1, n+1))
+        else:
+            tbinList.append(np.arange(t0, t1, dt))
+    badbins = np.cumsum([len(b) for b in tbinList])[:-1] - 1
+    tbins = np.hstack(tbinList)
+
+    eps = 'epera' if fluxed else 'epsilon'
+    p = photons
+    tedges, rate, err = sp.spectral_curves(p['time'], p['wavelength'], eps=p[eps], tbins=tbins, bands=bands,
+                                   groups=groups)
+    t0, t1 = [], []
+    for i in range(len(tedges)):
+        rate[i], err[i] = [np.delete(a, badbins) for a in [rate[i], err[i]]]
+        t0.append(np.delete(tedges[i][:-1], badbins))
+        t1.append(np.delete(tedges[i][1:], badbins))
+
+    assert all([np.all((tt1-tt0) < dt*2.0) for tt0,tt1 in zip(t0, t1)])
+    return t0, t1, rate, err
 
 
 def __inrange(spectbl, wr):
