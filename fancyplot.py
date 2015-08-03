@@ -326,30 +326,37 @@ def spectrumMovieFrames(star, inst, band, trange, dt, smoothfac, axspec, axcurve
         [obj.remove() for obj in [span, linelc, polylc, linespec, polyspec]]
 
 
-def showFlareStats(star, inst, label, trange, dt=10.0, ax=None):
+def showFlareStats(star, inst, label, trange, dt=30.0, ax=None):
     if ax is None: ax = plt.gca()
+    trange = np.array(trange)
 
     flareTbl, bands = io.readFlareTbl(star, inst, label)
 
     # make lightcurve
     groups = [range(len(bands))]
-    t0, t1, flux, err = reduce.auto_curve(star, inst, bands, dt, appx=False, groups=groups, fluxed=True)
+    curve = reduce.auto_curve(star, inst, bands, dt, appx=False, groups=groups, fluxed=True)
+    t0, t1, flux, err = zip(*curve)[0]
     t = (t0 + t1) / 2.0
 
     # narrow lightcurve down to range of interest
     keep = (t1 > trange[0]) & (t0 < trange[1])
     t, flux, err = t[keep], flux[keep], err[keep]
+    ymax = flux.max()
 
     # keep only largest flare in time range of interest
-    keep = (flareTbl['start'] <  trange[1]) & (flareTbl['stop'] < trange[0])
+    keep = (flareTbl['start'] < trange[1]) & (flareTbl['stop'] > trange[0])
     flareTbl = flareTbl[keep]
     iflare = np.argmax(flareTbl['PEW'])
     flare = flareTbl[iflare]
 
+    # reference time to start of flare
+    tref = flare['start']
+    t, flare['start'], flare['stop'], trange = t - tref, flare['start'] - tref, flare['stop'] - tref, trange - tref
+
     # plot lightcurve highlighting flare points
     flarepts = mnp.inranges(t, [flare['start'], flare['stop']])
-    ax.errorbar(t[~flarepts], flux[~flarepts], err[~flarepts], 'k.', capsize=0)
-    ax.errorbar(t[flarepts], flux[flarepts], err[flarepts], 'r.', capsize=0)
+    ax.errorbar(t[~flarepts], flux[~flarepts], err[~flarepts], fmt='ko', capsize=0)
+    ax.errorbar(t[flarepts], flux[flarepts], err[flarepts], fmt='rd', capsize=0)
 
     # reverse-engineer mean flux
     luminosity = flare['energy'] / flare['PEW']
@@ -357,5 +364,29 @@ def showFlareStats(star, inst, label, trange, dt=10.0, ax=None):
     mnflux = luminosity / 4 / np.pi / (dist * 3.08567758e18)**2
 
     # plot mean flux
+    ax.axhline(mnflux, color='gray', ls='--')
+    tmid = np.mean(t[~flarepts])
+    mnfluxstr = '$\overline{F}$ = %.1e' % mnflux
+    ax.text(tmid, mnflux + ymax/20.0, mnfluxstr, ha='center')
+
+    # # plot duration
+    # dt = flare['stop'] - flare['start']
+    # y = 1.05 * np.max(flux + err)
+    # ax.annotate('', xy=(flare['start'], y), xytext=(flare['stop'], y), arrowprops=dict(arrowstyle='<->', color='r'))
+    # # ax.arrow(flare['start'], y, dt, 0.0, length_includes_head=True)
+    # # ax.arrow(flare['start'], y, dt, 0.0, length_includes_head=True, head_starts_at_zero=True)
+    # ax.text(tmidFlare, y*1.02, '{:.0f} s'.format(dt), ha='center', color='r')
+
+    # fill area under flare
+    # tmidFlare = np.sum(t[flarepts]*flux[flarepts])/np.sum(flux[flarepts])
+    lo = [mnflux] * np.sum(flarepts)
+    ax.fill_between(t[flarepts], lo, flux[flarepts], color='r', alpha=0.3)
+    y = 0.2 * np.max(flux)
+    intlbl = 'equiv. width = {:.0f} s\nenergy = {:.1g} erg'.format(flare['PEW'], flare['energy'])
+    ax.text(0.05, 0.95, intlbl, ha='left', va='top', color='r', transform=ax.transAxes)
+
+    # axes
+    ax.set_xlabel('Time [s]')
+    ax.set_ylabel('$\lambda$-Integrated Flux \n[erg cm$^{-2}$ s$^{-1}$]')
 
 
