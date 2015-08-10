@@ -1175,7 +1175,7 @@ def findflares(curveList, flagfactor=1.0, silent=True):
     ns = [len(curve[0]) for curve in curveList]
     expends = list(np.cumsum(ns))
     expstarts = [0] + expends[:-1]
-    t0s, t1s, rates = map(np.hstack, zip(*curveList)[:3])
+    t0s, t1s, rates, errs = map(np.hstack, zip(*curveList))
     ts = (t0s + t1s) / 2.0
     clean = np.ones(len(rates), bool)
     count = 0
@@ -1215,9 +1215,18 @@ def findflares(curveList, flagfactor=1.0, silent=True):
         if np.all(clean == oldclean):
             break
 
-    # clean out any beginnings that
+    # FIXME: this whole thing should probably go in flare stats, but in particular I need to add error on quiescent flux
+    qrate = np.median(rates[clean])
+    Fpeaks, FpeakErrs, tpeaks, ratios = [], [], [], []
+    for irun in range(len(areas)):
+        i0, i1 = runslices[[irun, irun+1]]
+        ipeak = np.argmax(np.abs(rates[i0:i1])) + i0
+        Fpeaks.append(rates[ipeak] - qrate)
+        FpeakErrs.append(errs[ipeak])
+        ratios.append(rates[ipeak]/qrate)
+        tpeaks.append(ts[ipeak])
 
-    return begs, ends, flare
+    return begs, ends, flare, Fpeaks, FpeakErrs, tpeaks, ratios
 
 
 def computeFlareStats(fitsphotons, begs, ends, flares, waveranges, dist):
@@ -1251,14 +1260,16 @@ def computeFlareStats(fitsphotons, begs, ends, flares, waveranges, dist):
     PEWs = (rates - mnrate) / mnrate * dts
     assert np.all(np.isfinite(PEWs))
 
+    # compute ratio to cutoff PEW
+    # FIXME: getting some negative PEW ratios, specifically for GJ832 SiIV
+    PEWratios = np.abs(PEWs / PEWs.min())
+
     # multiply by mean luminosity to get absolute flare energy
     dist = dist * 3.08567758e18 # pc to cm
     mnlum = mnflux * 4 * np.pi * dist**2
     Es = PEWs * mnlum
 
-    PEWratios = np.abs(PEWs / PEWs.min())
-
-    return PEWs, Es, PEWratios
+    return PEWs, Es, PEWratios, mnrate, mnflux
 
 
 def cumfreq(PEWs, exptime):
@@ -1288,22 +1299,24 @@ def auto_flares(star, bands, inst, label, dt=1.0, silent=False):
         t0, t1 = tedges[:-1], tedges[1:]
         curves.append([t0, t1, cps, err])
 
-    begs, ends, flares = findflares(curves, silent=silent)
+    begs, ends, flares, Fpeaks, FpeakErrs, tpeaks, ratios = findflares(curves, silent=silent)
 
     dist = sc.quickval(db.proppath, star, 'dist')
-    pews, Es, pewratios = computeFlareStats(ph, begs, ends, flares, bands, dist)
+    pews, Es, pewratios, mnrate, mnflux = computeFlareStats(ph, begs, ends, flares, bands, dist)
 
     assert pews.min() < 0
 
     cfs = cumfreq(pews, expt)
 
-    data = [begs, ends, pews, flares, cfs, Es, pewratios]
-    names = ['start', 'stop', 'PEW', 'flare', 'cumfreq', 'energy', 'PEWratio']
-    units = ['s', 's', 's', '', 'd-1', 'erg', '']
+    data = [begs, ends, tpeaks, pews, flares, cfs, Es, pewratios, Fpeaks, FpeakErrs, ratios]
+    names = ['start', 'stop', 'peak', 'PEW', 'flare', 'cumfreq', 'energy', 'PEWratio', 'Fpk', 'Fpkerr', 'pkratio']
+    units = ['s', 's', 's', 's', '', 'd-1', 'erg', '', 'counts s-1', 'counts s-1', '']
     descriptions = ['start time of excursion referenced to MJD0', 'end time of excursion referenced to MJD0',
-                    'photometric equivalent width', 'excursion flagged as a flare', 'cumulative frequency of '
-                    'flares of >= PEW', 'absolute energy radiated by flare in band',
-                    'ratio of the PEW to the minimum PEW measured in the lightcurve']
+                    'time of flare peak referenced to MJD0',
+                    'photometric equivalent width', 'excursion flagged as a flare',
+                    'cumulative frequency of flares of >= PEW', 'absolute energy radiated by flare in band',
+                    'ratio of the PEW to the minimum PEW measured in the lightcurve',
+                    'peak flux of flare', 'error in peak flux of flare', 'ratio of peak to quiescent flux']
     cols = []
     for d, n, u, dc in zip(data, names, units, descriptions):
         cols.append(Table.Column(d, n, unit=u, description=dc))
@@ -1311,6 +1324,9 @@ def auto_flares(star, bands, inst, label, dt=1.0, silent=False):
     flareTable.meta['STAR'] = star
     flareTable.meta['EXPTIME'] = expt
     flareTable.meta['MJD0'] = ph[0].header['MJD0']
+    flareTable.meta['QSCTCPS'] = mnrate
+    flareTable.meta['QSCTFLUX'] = mnflux
+    flareTable.meta['DT'] = dt
 
     for i, (w0, w1) in enumerate(bands):
         key0, key1 = 'bandbeg{}'.format(i), 'bandend{}'.format(i)
@@ -1320,49 +1336,112 @@ def auto_flares(star, bands, inst, label, dt=1.0, silent=False):
     flareTable.write(db.flarepath(star, inst, label), format='fits', overwrite=True)
 
 
-def combine_flarecats(band, inst, stars='all'):
-    fs = db.findfiles(db.flaredir, inst, band, 'flares', fullpaths=True)
+def matched_flare_stats(star, inst, bandlabels='all', masterband='broad130a', flarecut=None):
+    """
+    Match the flares from the tables of flares for the bands sepcified by bandlables for specified star and instrument.
+    Compute stats.
+    """
+    if bandlabels == 'all':
+        fs = db.findfiles(db.flaredir, inst, star, 'flares', fullpaths=True)
+        bandlabels = [db.parse_info(f, 4, 5) for f in fs]
+    try:
+        bandlabels.remove(masterband)
+    except ValueError:
+        pass
+
+    masterCat, _ = io.readFlareTbl(star, inst, masterband)
+
+    pkratios, pkoffsets, Eratios = {}, {}, {}
+    for band in bandlabels:
+        bandCat, _ = io.readFlareTbl(star, inst, band)
+        bandRanges = np.array([bandCat['start'], bandCat['stop']]).T
+        pkratio, pkoffset, PEWratio = [], [], []
+        for flare in masterCat:
+            if flarecut is None and not flare['flare']:
+                continue
+            if flarecut is not None and flare['PEWratio'] < flarecut:
+                continue
+            masterRange = np.array([[flare['start'], flare['stop']]])
+            duration = flare['stop'] - flare['start']
+            overlapping, _ = utils.argoverlap(bandRanges, masterRange, 'loose')
+            slimCat = bandCat[overlapping]
+            overranges = zip(slimCat['start'], slimCat['stop'])
+            overranges = mnp.range_intersect(overranges, [masterRange])
+            overlap = overranges[:,1] - overranges[:,0]
+            if np.any(overlap/duration) > 0.5:
+                i = np.argmax(overlap)
+                pkratio.append(slimCat[i]['pkratio']/flare['pkratio'])
+                pkoffset.append(slimCat[i]['peak'] - flare['peak'])
+                PEWratio.append(slimCat[i]['PEW']/flare['PEW'])
+            else:
+                pkratio.append(np.nan); pkoffset.append(np.nan); PEWratio.append(np.nan)
+        pkratios[band] = pkratio
+        pkoffsets[band] = pkoffset
+        Eratios[band] = PEWratio
+
+    return pkratios, pkoffsets, Eratios
+
+
+def combine_flarecats(bandname, inst, flarecut=1.0, stars='all'):
+    fs = db.findfiles(db.flaredir, inst, bandname, 'flares', fullpaths=True)
     if stars != 'all':
         hasStar = lambda f: any([s in f for s in stars])
         fs = filter(hasStar, fs)
 
-    # group by instrument
-    insts = set(map(db.parse_instrument, fs))
-
-    tbls = []
+    tbls, dts, bands = [], [], []
     expt = 0.0
     for f in fs:
         star = db.parse_info(f, 3, 4)
         flareTable = Table.read(f, format='fits')
         expt += flareTable.meta['EXPTIME']
 
+        # store start, stop, peak relative times under new names
+        for key in ['start', 'peak', 'stop']:
+            flareTable[key + ' rel'] = flareTable[key]
+
         # change begs and ends to mjd
         mjd0 = flareTable.meta['MJD0']
         flareTable['start'] = flareTable['start']/24.0/3600.0 + mjd0
         flareTable['stop'] = flareTable['stop']/24.0/3600.0 + mjd0
-        flareTable['start'].unit, flareTable['stop'].unit = 'mjd', 'mjd'
+        flareTable['peak'] = flareTable['peak']/24.0/3600.0 + mjd0
+        flareTable['start'].unit, flareTable['stop'].unit, flareTable['peak'].unit = 'mjd', 'mjd', 'mjd'
 
         # cull non-flares
-        keep = flareTable['flare']
+        keep = flareTable['flare'] & (flareTable['PEWratio'] > flarecut)
         flareTable = flareTable[keep]
 
-        # add some columns specific to table and delete metadata that will cause conflicts
+        # add some columns specific to table
         n = len(flareTable)
-        band = db.parse_info(f, 4, 5)
+        bandname = db.parse_info(f, 4, 5)
         flareTable['inst'] = Table.Column([inst]*n, description='instrument', unit='', dtype=str)
         flareTable['star'] = Table.Column([star]*n, unit='', dtype=str)
-        flareTable['bandname'] = Table.Column([band]*n, unit='', dtype=str)
-        del flareTable.meta['EXPTIME']   # otherwise produces a merge conflict later
-        del flareTable.meta['MJD0']
-        del flareTable.meta['STAR']
+        flareTable['bandname'] = Table.Column([bandname]*n, unit='', dtype=str)
+
+        # record dt and bands to check that all are the same later
+        dts.append(flareTable.meta['DT'])
+        keys = flareTable.meta.keys()
+        nbands = sum(map(lambda s: 'BANDBEG' in s, keys))
+        band0 = [flareTable.meta['BANDBEG' + str(i)] for i in range(nbands)]
+        band1 = [flareTable.meta['BANDEND' + str(i)] for i in range(nbands)]
+        bands.append(np.array(zip(band0, band1)))
+
+        # metadata will just cause merge conflicts
+        for key in flareTable.meta:
+            del flareTable.meta[key]
         del flareTable['flare']
+
         tbls.append(flareTable)
+
+    assert np.allclose(dts, dts[0])
+    assert np.allclose(bands[:-1], bands[1:])
 
     # compute cum. freq. of flare PEWs for all stars
     tbl = vstack(tbls)
     tbl.sort('PEW')
     tbl.reverse()
     tbl.meta['EXPTIME'] = expt
+    tbl.meta['DT'] = dts[0]
+    tbl.meta['BANDS'] = bands[0]
     tbl['cumfreqPEW'] = cumfreq(tbl['PEW'], expt)
     tbl['cumfreqPEW'].description = 'cumuluative frequency of all flares with >= PEW for the instrument'
     tbl['cumfreqE'] = cumfreq(tbl['energy'], expt)
