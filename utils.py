@@ -5,22 +5,54 @@ Created on Tue Nov 18 18:02:03 2014
 @author: Parke
 """
 
-import settings, io
+import rc, io, db
 import mypy.my_numpy as mnp
 import numpy as np
 from astropy.table import Table, Column
 from astropy.table import vstack as tblstack
 from os import path
-import database as db
+import reduce as red
 
 keys = ['units', 'dtypes', 'fmts', 'descriptions', 'colnames']
-spectbl_format = [settings.spectbl_format[key] for key in keys]
+spectbl_format = [rc.spectbl_format[key] for key in keys]
 units, dtypes, fmts, descriptions, colnames = spectbl_format
 
-def flux_integral(spectbl):
+def mag(spectbl, band='J'):
+    c = 3e18 # AA/s
+    w = (spectbl['w0'] + spectbl['w1']) / 2.0
+    f = spectbl['flux'] * w**2 / c
+
+    files = {'J':'2MASSJ.txt', 'H':'2MASSH.txt', 'K':'2MASSKs.txt'}
+
+    filterfile = path.join(rc.filterpath, files[band])
+    with open(filterfile) as filter:
+        zeropoint = float(filter.readline().strip())
+        wf, yf = np.loadtxt(filter).T
+
+    vf = c/wf  # note that now this goes from high to low, hence integral below will be negative
+    ff = np.interp(wf, w, f)
+    filterflux = np.trapz(ff*yf, vf) / (vf[-1] - vf[0])
+
+    mag = -2.5*np.log10(filterflux) + zeropoint
+    return mag
+
+def flux_integral(spectbl, wa=None, wb=None, normed=False):
     """Compute integral of flux from spectbl values. Result will be in erg/s/cm2."""
+    if normed:
+        if 'normflux' not in spectbl.colnames:
+            spectbl = add_normflux(spectbl)
+
+    if wa is not None:
+        spectbl = red.split_exact(spectbl, wa, 'red')
+    if wb is not None:
+        spectbl = red.split_exact(spectbl, wb, 'blue')
+
     dw = spectbl['w1'] - spectbl['w0']
-    return np.sum(spectbl['flux'] * dw)
+
+    if normed:
+        return np.sum(spectbl['normflux'] * dw)
+    else:
+        return np.sum(spectbl['flux'] * dw), mnp.quadsum(spectbl['error'] * dw)
 
 def bol2sol(a):
     """Convert bolometric-normalized fluxes to Earth-equivalent fluxes."""
