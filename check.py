@@ -9,8 +9,7 @@ Created on Wed Dec 10 15:22:01 2014
 import matplotlib.pyplot as plt
 from astropy.table import Table
 from astropy.io import fits
-import database as db
-import io, settings, utils
+import rc, io, utils, db
 import reduce as red
 from plot import specstep
 import numpy as np
@@ -98,8 +97,8 @@ def piecespec(spec, err=True):
         keep = (inst == i)
         thisspec = spec[keep]
 
-        configs_i = np.nonzero(np.array(settings.instvals) & i)[0]
-        configs = [settings.instruments[j] for j in configs_i]
+        configs_i = np.nonzero(np.array(rc.instvals) & i)[0]
+        configs = [rc.instruments[j] for j in configs_i]
         configstr = ' + '.join(configs)
 
         lines = specstep(thisspec, err=err)
@@ -227,7 +226,7 @@ def examinedates(star):
     labels = [db.parse_paninfo(p.meta['FILENAME']) for p in pans]
     plt.legend(los, labels)
 
-def HSTimgregions(specfile):
+def HSTimgregions(specfile, scale=0.3):
     """
     Show where the spectrum was extracted from the corresponding STScI image
     files. Custom extractions made from an x2d ro sx2 will use those,
@@ -247,14 +246,14 @@ def HSTimgregions(specfile):
     imgfile = imgfile[0]
 
     #plot 2d image file
-    a = 0.3
     img = fits.getdata(imgfile, 1)
     m, n = img.shape
-    plt.imshow(img**a, cmap='Greys')
+    plt.imshow(img**scale, interpolation='nearest')
     plt.gca().set_aspect('auto')
-    plt.colorbar(label='flux**{:.2f}'.format(a))
+    plt.colorbar(label='flux**{:.2f}'.format(scale))
     plt.ylabel('axis 1 (image)')
     plt.xlabel('axis 2 (wavelength)')
+    plt.title(path.basename(imgfile))
 
     if custom:
         spec = Table.read(specfile)

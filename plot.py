@@ -7,16 +7,13 @@ Created on Wed Nov 19 12:11:41 2014
 
 import matplotlib.pyplot as plt
 from mypy.specutils import plot as specplot
-import io
-import database as db
-import utils
-import reduce
+import rc, io, utils, db, reduce
 import numpy as np
 
-stars = db.stars
+stars = rc.stars
 
 def texname(star):
-    with open(db.target_list_tex) as f:
+    with open(rc.target_list_tex) as f:
         texnames = f.read().splitlines()
 
     i = stars.index(star)
@@ -166,3 +163,124 @@ def specstep(spectbl, *args, **kwargs):
         return fplt, eplt
     else:
         return fplt
+
+
+def getcurves():
+    """
+    Use this just to save time by not recreating curves each time you
+    reload the function.
+    """
+    curves = []
+    for star in stars:
+        tagfiles = db.findfiles('u', 'corrtag_a', 'cos_g130m', star, fullpaths=True)
+        x1dfiles = db.findfiles('u', 'x1d', 'cos_g130m', star, fullpaths=True)
+
+        curve = cv.autocurve(tagfiles, x1dfiles, dt=dt, bands=bands, groups=groups)
+        curves.append(curve[0])
+
+    s, e, y, maxnorm, offsets, flarepts = [], [], [], [], [], []
+    offset = 0.0
+    for curve, flarerng in zip(curves, flarerngs):
+        t = (curve['t0'] + curve['t1']) / 2.0
+        t = t.data[1:]
+
+        # get rid of gaps
+        ss, j, _ = mnp.shorten_jumps(t, maxjump=10*dt)
+        s.append(ss)
+
+        # normalize the data to median
+        f = curve['cps'].data[1:]
+        fmed = np.median(f)
+        yy = f/fmed
+        yy -= 1.0
+        ee = curve['cps err'].data[1:]/fmed
+
+        # normalize data to max - min
+        ymax = np.max(yy)
+        yy /= ymax
+        ee /= ymax
+
+        # identify flare pts
+        i = np.arange(len(yy))
+        ff = mnp.inranges(i, flarerng)
+
+        # cull negative outliers
+        good = yy/ee > -2.0
+        ss, yy, ee, ff = [a[good] for a in [ss, yy, ee, ff]]
+
+        y.append(yy)
+        e.append(ee)
+        flarepts.append(ff)
+        maxnorm.append(ymax)
+
+        offset = offset - np.min(yy - ee)
+        offsets.append(offset)
+        offset += np.max(yy + ee)
+        offset += 0.2
+
+    stuff = zip(s, y, e, flarepts, maxnorm, offsets)
+    return stuff
+
+def setupAxes():
+    plt.figure(figsize=[10.666, 5])
+    ax = plt.axes(frameon=False)
+    xax = ax.get_xaxis()
+    xax.tick_bottom()
+    yax = ax.get_yaxis()
+#    ax.set_xticks([0, 5000, 10000, 15000])
+    plt.subplots_adjust(0.02, 0.10, 0.95, 0.95)
+
+    yax.set_visible(False)
+
+    ymin, _ = yax.get_view_interval()
+
+    plt.hlines(0, 0, maxt, lw=2, color='k')
+
+    plt.xlim(-23*label_offset, 14100)
+#    plt.ylim(-10.0, None)
+
+    plt.text(maxt/2.0, -0.9, 'Time, Observation Gaps Shortened (s)',
+             ha='center', va='center')
+
+def plotLC(stuff, colors, fname):
+    setupAxes()
+
+    for (ss, yy, ee, flare, mn, offset), color, star in zip(stuff, colors, stars):
+        yo = yy.copy() + offset
+
+
+
+        ekwds = dict(fmt='.', capsize=0.0, color=color, ms=3)
+        plt.errorbar(ss[~flare], yo[~flare], ee[~flare], alpha=0.2, **ekwds)
+        plt.plot([-rng_offset, maxt], [offset]*2, '--', color=color)
+        plt.text(-label_offset, offset + 0.5, ml.plot.texname(star),
+                 va='center', ha='right', color=color)
+
+        # make arrow
+        xy = (-rng_offset, offset)
+        xytext = (-rng_offset, offset + 1.1)
+        arrowprops = dict(arrowstyle='<-', color=color)
+        plt.annotate('', xy=xy, xytext=xytext, arrowprops=arrowprops)
+
+        # label arrow
+        mnstr = str(round(mn, 1))
+        plt.text(-rng_offset*2.0, offset, '1.0', va='bottom', ha='right',
+                 color=color, fontsize=fntsz*0.8)
+        plt.text(-rng_offset*2.0, offset + 1.1, mnstr, va='top', ha='right',
+                 color=color, fontsize=fntsz*0.8)
+
+        if ekwds['color'] == 'k':
+            ekwds['color'] = 'r'
+        plt.errorbar(ss[flare], yo[flare], ee[flare], **ekwds)
+
+    plt.xlim(-label_offset - 2000, maxt)
+    ax = plt.gca()
+    xt = np.array(ax.get_xticks())
+    ax.set_xticks(xt[xt >= 0])
+    plt.autoscale(axis='y', tight=True)
+    plt.savefig(rc.root + '/scratchwork/' + fname, dpi=300)
+
+colors = ['b', 'g', 'r', 'b', 'g', 'r']
+blacks = ['k']*6
+
+

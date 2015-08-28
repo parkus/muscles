@@ -18,9 +18,8 @@ spectbl_format = [rc.spectbl_format[key] for key in keys]
 units, dtypes, fmts, descriptions, colnames = spectbl_format
 
 def mag(spectbl, band='J'):
-    c = 3e18 # AA/s
     w = (spectbl['w0'] + spectbl['w1']) / 2.0
-    f = spectbl['flux'] * w**2 / c
+    f = spectbl['flux']
 
     files = {'J':'2MASSJ.txt', 'H':'2MASSH.txt', 'K':'2MASSKs.txt'}
 
@@ -29,9 +28,8 @@ def mag(spectbl, band='J'):
         zeropoint = float(filter.readline().strip())
         wf, yf = np.loadtxt(filter).T
 
-    vf = c/wf  # note that now this goes from high to low, hence integral below will be negative
     ff = np.interp(wf, w, f)
-    filterflux = np.trapz(ff*yf, vf) / (vf[-1] - vf[0])
+    filterflux = np.trapz(ff*yf, wf)
 
     mag = -2.5*np.log10(filterflux) + zeropoint
     return mag

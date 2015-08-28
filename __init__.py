@@ -1,11 +1,12 @@
-import reduce
-import database
+import rc
 import io
-import plot
 import utils
+import db
+import reduce
+import plot
 import check
-import settings
 import fancyplot
 
-stars = database.stars
-observed = database.observed
+stars = rc.stars
+observed = rc.observed
+

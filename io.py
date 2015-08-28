@@ -10,17 +10,14 @@ from astropy.io import fits
 import numpy as np
 from mypy.my_numpy import mids2edges, block_edges, midpts
 from scipy.io import readsav as spreadsav
-import database as db
-import utils, settings
+import rc, utils, db
 from astropy.table import Table
 from astropy.time import Time
 from warnings import warn
 
-phoenixbase = 'ftp://phoenix.astro.physik.uni-goettingen.de/HiResFITS/PHOENIX-ACES-AGSS-COND-2011/'
-
 
 def readphotons(star, inst):
-    pf = db.findfiles('photons', star, 'cos_g130m', fullpaths=True)
+    pf = db.findfiles('photons', star, inst, fullpaths=True)
     assert len(pf) == 1
     ph = fits.open(pf[0])
     return ph, ph['events'].data
@@ -82,7 +79,7 @@ def read(specfiles):
     fmt = specfiles[-i:]
     specs = readfunc[fmt](specfiles)
     try:
-        sets = settings.load(star)
+        sets = rc.loadsettings(star)
         if 'coadd' not in specfiles and 'custom' not in specfiles:
             for config, i in sets.reject_specs:
                 if config in specfiles:
@@ -113,7 +110,7 @@ def readfits(specfile):
     """Read a fits file into standardized table."""
 
     observatory = db.parse_observatory(specfile)
-    insti = db.getinsti(specfile)
+    insti = rc.getinsti(specfile)
 
     spec = fits.open(specfile)
     if any([s in specfile for s in ['coadd', 'custom', 'mod', 'panspec']]):
@@ -187,7 +184,7 @@ def readtxt(specfile):
         wmid, f, e = data.T
         we = mids2edges(wmid)
         w0, w1 = we[:-1], we[1:]
-        inst = db.getinsti(specfile)
+        inst = rc.getinsti(specfile)
         spectbl = utils.vecs2spectbl(w0, w1, f, e, instrument=inst,
                                      filename=specfile)
         return [spectbl]
@@ -228,7 +225,7 @@ def readsav(specfile):
     N = len(flux)
     err = np.zeros(N)
     expt,flags = np.zeros(N), np.zeros(N, 'i1')
-    source = db.getinsti(specfile)*np.ones(N)
+    source = rc.getinsti(specfile)*np.ones(N)
     normfac = np.ones(N)
     start, end = [np.zeros(N)]*2
     data = [w0,w1,flux,err,expt,flags,source,normfac,start,end]
@@ -282,8 +279,8 @@ def writefits(spectbl, name, overwrite=False):
         for comment in comments: ftbl[1].header['COMMENT'] = comment
 
         #add an extra bintable for the instrument identifiers
-        cols = [fits.Column('instruments','13A', array=settings.instruments),
-                fits.Column('bitvalues', 'I', array=settings.instvals)]
+        cols = [fits.Column('instruments','13A', array=rc.instruments),
+                fits.Column('bitvalues', 'I', array=rc.instvals)]
         hdr = fits.Header()
         hdr['comment'] = ('This extension is a legend for the integer '
                           'identifiers in the instrument '
@@ -316,27 +313,6 @@ def writefits(spectbl, name, overwrite=False):
 
         ftbl.flush()
 
-def phxurl(Teff, logg=4.5, FeH=0.0, aM=0.0, repo='ftp'):
-    """
-    Constructs the URL for the phoenix spectrum file for a star with effective
-    temperature Teff, log surface gravity logg, metalicity FeH, and alpha
-    elemnt abundance aM.
-
-    Does not check that the URL is actually valid, and digits beyond the
-    precision of the numbers used in the path will be truncated.
-    """
-    zstr = '{:+4.1f}'.format(FeH)
-    if FeH == 0.0: zstr = '-' + zstr[1:]
-    astr = '.Alpha={:+5.2f}'.format(aM) if aM != 0.0 else ''
-    name = ('lte{T:05.0f}-{g:4.2f}{z}{a}.PHOENIX-ACES-AGSS-COND-2011-HiRes.fits'
-            ''.format(T=Teff, g=logg, z=zstr, a=astr))
-
-    if repo == 'ftp':
-        folder = 'Z' + zstr + astr + '/'
-        return phoenixbase + folder + name
-    else:
-        return path.join(repo, name)
-
 def phxdata(Teff, logg=4.5, FeH=0.0, aM=0.0, repo='ftp', ftpbackup=True):
     """
     Get a phoenix spectral data from the repo and return as an array.
@@ -345,13 +321,13 @@ def phxdata(Teff, logg=4.5, FeH=0.0, aM=0.0, repo='ftp', ftpbackup=True):
     isn't found in the specified repo location and the file will be saved
     in the specified location.
     """
-    path = phxurl(Teff, logg, FeH, aM, repo=repo)
+    path = rc.phxurl(Teff, logg, FeH, aM, repo=repo)
     try:
         fspec = fits.open(path)
     except IOError:
         if ftpbackup and repo != 'ftp':
             warn('PHX file not found in specified repo, pulling from ftp.')
-            db.fetchphxfile(Teff, logg, FeH, aM, repo=repo)
+            rc.fetchphxfile(Teff, logg, FeH, aM, repo=repo)
             fspec = fits.open(path)
         else:
             raise IOError('File not found at {}.'.format(path))

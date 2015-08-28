@@ -8,11 +8,11 @@ Created on Mon Oct 20 15:42:13 2014
 import numpy as np
 from astropy.table import Table, vstack
 from astropy.io import fits
+import os
 import mypy.my_numpy as mnp
 from math import sqrt, ceil, log10
 from mypy import specutils, statsutils
-import database as db
-import utils, io, settings, check
+import rc, utils, io, check, db
 from spectralPhoton.hst.convenience import x2dspec, specphotons
 import spectralPhoton.functions as sp
 from itertools import combinations_with_replacement as combos
@@ -20,22 +20,22 @@ from scipy.stats import norm
 from warnings import warn
 import scicatalog.scicatalog as sc
 
-colnames = settings.spectbl_format['colnames']
-airglow_ranges = db.airglow_ranges
+colnames = rc.spectbl_format['colnames']
+airglow_ranges = rc.airglow_ranges
 safe_ranges = [0.0] + list(airglow_ranges.ravel()) + [np.inf]
 safe_ranges = np.reshape(safe_ranges, [len(airglow_ranges) + 1, 2])
 
 
 def theworks(star, R=10000.0, dw=1.0, silent=False):
-    if np.isnan(db.props['Teff'][star]):
+    if np.isnan(rc.starprops['Teff'][star]):
         raise ValueError("Fool! You haven't entered Teff, etc. for {} yet."
                          "".format(star))
 
     try:
-        settings.load(star)
+        rc.loadsettings(star)
     except IOError:
         warn("No settings file found for {}. Initializing one.".format(star))
-        sets = settings.StarSettings(star)
+        sets = rc.StarSettings(star)
         sets.save()
 
     # interpolate and save phoenix spectrum
@@ -64,8 +64,15 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=True,
     Overlapping spectra will be normalized with the assumptions that they are
     listed in order of descending quality.
     """
-    sets = settings.load(star)
+    sets = rc.loadsettings(star)
     files, lyafile = db.panfiles(star)
+
+    # if there is a custom normalization order, reorder the files accordingly
+    if len(sets.norm_order) > 0:
+        for inst in sets.norm_order[::-1]:
+            ifiles = filter(lambda s: inst in s, files)
+            for f in ifiles: files.remove(f)
+            for f in ifiles[::-1]: files.insert(0, f)
     specs = io.read(files)
     names = [s.meta['NAME'] for s in specs]
 
@@ -130,28 +137,38 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=True,
             print ''
             print 'splicing in {}, covering {:.1f}-{:.1f}'.format(name, *specrange)
 
-        overlap = utils.overlapping(spec, addspec)
-        normit = not settings.dontnormalize(addspec)
-        if not overlap and not silent:
-            print '\tno overlap, so won\'t normalize'
-        if not normit and not silent:
-            print '\twon\'t normalize, cuz you said not to'
-        if overlap and normit:
-            if not silent:
-                print '\tnormalizing within the overlap'
-            normranges = sets.get_norm_range(name)
-            if normranges is None:
-                normspec = addspec
+        if not rc.dontnormalize(addspec):
+            inst = db.parse_instrument(name)
+            if inst in sets.weird_norm:
+                refinst = sets.weird_norm[inst]
+                if not silent:
+                    print 'normalizing {} spec using the same factor as that used for the {} spec'.format(inst, refinst)
+                refspec = filter(lambda spec: refinst in spec.meta['NAME'], specs)
+                assert len(refspec) == 1
+                refspec = refspec[0]
+                normfac = refspec[0]['normfac']
             else:
-                normspec = utils.keepranges(addspec, normranges)
-            normfac = normalize(spec, normspec, silent=silent)
-            # HACK: phx plot breaks things, so I'm just not doing it for now
-            if plotnorms and normfac != 1.0 and 'phx' not in name:
-                check.vetnormfacs(addspec, spec, normfac, normranges)
+                overlap = utils.overlapping(spec, addspec)
+                if not overlap and not silent:
+                    print '\tno overlap, so won\'t normalize'
+                if overlap:
+                    if not silent:
+                        print '\tnormalizing within the overlap'
+                    normranges = sets.get_norm_range(name)
+                    if normranges is None:
+                        normspec = addspec
+                    else:
+                        normspec = utils.keepranges(addspec, normranges)
+                    normfac = normalize(spec, normspec, silent=silent)
+                    # HACK: phx plot breaks things, so I'm just not doing it for now
+                if plotnorms and normfac != 1.0 and 'phx' not in name:
+                    check.vetnormfacs(addspec, spec, normfac, normranges)
             addspec['flux'] *= normfac
             addspec['error'] *= normfac
             addspec['normfac'] = normfac
             specs[i] = addspec  # so i can use normalized specs later (lya)
+        elif not silent:
+            print '\twon\'t normalize, cuz you said not to'
 
         spec = smartsplice(spec, addspec, silent=silent)
     spec.meta['NAME'] = db.parse_name(db.panpath(star))
@@ -167,13 +184,13 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=True,
         if not silent:
             print ('replacing section {:.1f}-{:.1f} with STIS data from {lf}, '
                    'normalized by {normfac}'
-                   ''.format(*settings.lyacut, lf=lyafile, normfac=normfac))
+                   ''.format(*rc.lyacut, lf=lyafile, normfac=normfac))
     else:
         if not silent:
             print ('replacing section {:.1f}-{:.1f} with data from {lf}'
-                   ''.format(*settings.lyacut, lf=lyafile))
+                   ''.format(*rc.lyacut, lf=lyafile))
         lyaspec = io.read(lyafile)[0]
-    lyaspec = utils.keepranges(lyaspec, settings.lyacut)
+    lyaspec = utils.keepranges(lyaspec, rc.lyacut)
     spec = splice(spec, lyaspec)
 
     # fill any remaining gaps
@@ -662,7 +679,7 @@ def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime',
 
     weights = [1.0 / ee ** 2 for ee in e] if weights == 'error' else expt
     if maskbaddata:
-        dqmasks = map(settings.seriousdqs, sourcefiles)
+        dqmasks = map(rc.seriousdqs, sourcefiles)
         masks = __make_masks(we, dq, dqmasks)
         for i in range(len(masks)):
             start[i][masks[i]] = np.inf
@@ -714,6 +731,9 @@ def auto_coadd(star, configs=None, silent=False):
         for config in configs:
             files = db.sourcespecfiles(star, config)
             files = db.sub_customfiles(files)
+            # clooge to deal with case when there are no x1ds -- look for just custom specs
+            if len(files) == 0:
+                files = db.findfiles('u', star, config, 'custom_spec', fullpaths=True)
             groups.append(files)
 
     for group in groups:
@@ -740,13 +760,13 @@ def auto_coadd(star, configs=None, silent=False):
             coadd(spectbls, savefits=True, weights=weights, silent=silent)
 
 
-def phxspec(Teff, logg=4.5, FeH=0.0, aM=0.0, repo=db.phxrepo):
+def phxspec(Teff, logg=4.5, FeH=0.0, aM=0.0, repo=rc.phxrepo):
     """
     Quad-linearly interpolates the available phoenix spectra to the provided
     values for temperature, surface gravity, metallicity, and alpha metal
     content.
     """
-    grids = [db.phxTgrid, db.phxggrid, db.phxZgrid, db.phxagrid]
+    grids = [rc.phxTgrid, rc.phxggrid, rc.phxZgrid, rc.phxagrid]
     pt = [Teff, logg, FeH, aM]
 
     # make a function to retrieve spectrum given grid indices
@@ -761,33 +781,34 @@ def phxspec(Teff, logg=4.5, FeH=0.0, aM=0.0, repo=db.phxrepo):
     N = len(spec)
     err = np.zeros(N)
     expt, flags = np.zeros(N), np.zeros(N, 'i1')
-    insti = settings.getinsti('mod_phx_-----')
+    insti = rc.getinsti('mod_phx_-----')
     source = insti * np.ones(N, 'i1')
     normfac, start, end = 1.0, 0.0, 0.0
-    data = [db.phxwave[:-1], db.phxwave[1:], spec, err, expt, flags, source,
+    data = [rc.phxwave[:-1], rc.phxwave[1:], spec, err, expt, flags, source,
             normfac, start, end]
     return utils.list2spectbl(data)
 
 
 def auto_phxspec(star, silent=False):
-    Teff, kwds = db.phxinput(star)
+    kwds = {}
+    for key in ['Teff', 'logg', 'FeH', 'aM']:
+        val = rc.starprops[key][star]
+        if not np.isnan(val):
+            kwds[key] = val
     if not silent:
         print 'interpolating phoenix spectrum for {} with values'.format(star)
-        kwds2 = dict(Teff=Teff, **kwds)
-        print kwds2
-    spec = phxspec(Teff, **kwds)
+        print kwds
+    spec = phxspec(**kwds)
     spec.meta['STAR'] = star
-    path = db.phxpath(star)
+    path = rc.phxpath(star)
     spec.meta['NAME'] = db.parse_name(path)
     if not silent:
         print 'writing spectrum to {}'.format(path)
     io.writefits(spec, path, overwrite=True)
 
 
-def auto_customspec(star, specfiles=None, silent=False):
-    if specfiles is None:
-        specfiles = db.allspecfiles(star)
-    ss = settings.load(star)
+def auto_customspec(star, silent=False):
+    ss = rc.loadsettings(star)
     if not silent:
         if len(ss.custom_extractions) == 0:
             'no custom extractions set for {}'.format(star)
@@ -798,15 +819,15 @@ def auto_customspec(star, specfiles=None, silent=False):
             print 'with parameters'
             print custom['kwds']
         if 'hst' in config:
-            x1dfiles = db.sourcespecfiles(star, config)
-            for x1dfile in x1dfiles:
-                x2dfile = x1dfile.replace('x1d', 'x2d')
+            x2dfiles = db.findfiles('u', star, config, 'x2d', fullpaths=True)
+            for x2dfile in x2dfiles:
                 if not silent:
                     print 'using x2dfile {}'.format(x2dfile)
-                specfile = x1dfile.replace('x1d', 'custom_spec')
-                dqmask = settings.seriousdqs(specfile)
-                spec = x2dspec(x2dfile, x1dfile=x1dfile, bkmask=dqmask,
-                               **custom['kwds'])
+                x1dfile = x2dfile.replace('x2d', 'x1d')
+                if not os.path.exists(x1dfile): x1dfile = None
+                specfile = x2dfile.replace('x2d', 'custom_spec')
+                dqmask = rc.seriousdqs(specfile)
+                spec = x2dspec(x2dfile, x1dfile=x1dfile, bkmask=dqmask, **custom['kwds'])
 
                 # trim any nans
                 isnan = np.isnan(spec['flux'])
@@ -817,7 +838,7 @@ def auto_customspec(star, specfiles=None, silent=False):
                 datalist = [spec[s] for s in ['w0', 'w1', 'flux', 'error']]
                 hdr = fits.getheader(x2dfile, extname='sci')
                 expt, start, end = [hdr[s] for s in ['exptime', 'expstart', 'expend']]
-                inst = db.getinsti(specfile)
+                inst = rc.getinsti(specfile)
                 norm = 1.0
                 datalist.extend([expt, spec['dq'], inst, norm, start, end])
 
@@ -833,21 +854,29 @@ def auto_customspec(star, specfiles=None, silent=False):
                                       "".format(config))
 
 
-def auto_photons(star):
+def auto_photons(star, inst='all'):
     alltagfiles = db.findfiles('u', 'tag', star, fullpaths=True)
     allx1dfiles = db.findfiles('u', 'x1d', star, fullpaths=True)
-    instruments = map(db.parse_instrument, alltagfiles)
-    instruments = list(set(instruments))
-    #FIXME: some echelle data have different numbers of orders, which the function for finding overlapping
-    instruments = filter(lambda s: 'cos' in s, instruments)
+
+    if inst == 'all':
+        instruments = map(db.parse_instrument, alltagfiles)
+        instruments = list(set(instruments))
+        #FIXME: some echelle data have different numbers of orders, which the function for finding overlapping
+        instruments = filter(lambda s: 'cos' in s, instruments)
+    else:
+        instruments = [inst]
 
     for instrument in instruments:
         getInstFiles = lambda files: filter(lambda s: instrument in s, files)
         tagfiles = getInstFiles(alltagfiles)
         x1dfiles = getInstFiles(allx1dfiles)
 
+        if 'cos_g230l' in instrument:
+            kwds = {'extrsize':30, 'bkoff':[30, -30], 'bksize':[20, 20]}
+        else:
+            kwds = {}
         f = db.photonpath(tagfiles[0])
-        specphotons(tagfiles, x1dfiles, fitsout=f, clobber=True)
+        specphotons(tagfiles, x1dfiles, fitsout=f, clobber=True, **kwds)
 
 
 def rebin(spec, newbins):
@@ -1139,7 +1168,7 @@ def fill_gaps(spec, fill_with=4, fit_span=10.0, fit_pts=None, resolution=None,
 
         # make a spectbl to fill in the gap
         w0, w1 = gapbins.T
-        inst = settings.getinsti('mod_gap_fill-')
+        inst = rc.getinsti('mod_gap_fill-')
         star = spec.meta['STAR']
         name = spec.meta['NAME']
         gapspec = utils.vecs2spectbl(w0, w1, gapflux, instrument=inst,
@@ -1217,16 +1246,18 @@ def findflares(curveList, flagfactor=1.0, silent=True):
 
     # FIXME: this whole thing should probably go in flare stats, but in particular I need to add error on quiescent flux
     qrate = np.median(rates[clean])
-    Fpeaks, FpeakErrs, tpeaks, ratios = [], [], [], []
+    Fpeaks, FpeakErrs, tpeaks, ratios, ratioerrs = [], [], [], [], []
     for irun in range(len(areas)):
         i0, i1 = runslices[[irun, irun+1]]
         ipeak = np.argmax(np.abs(rates[i0:i1])) + i0
         Fpeaks.append(rates[ipeak] - qrate)
         FpeakErrs.append(errs[ipeak])
         ratios.append(rates[ipeak]/qrate)
+        # FIXME: this should account for error in qrate
+        ratioerrs.append(errs[ipeak]/qrate)
         tpeaks.append(ts[ipeak])
 
-    return begs, ends, flare, Fpeaks, FpeakErrs, tpeaks, ratios
+    return begs, ends, flare, Fpeaks, FpeakErrs, tpeaks, ratios, ratioerrs
 
 
 def computeFlareStats(fitsphotons, begs, ends, flares, waveranges, dist):
@@ -1299,7 +1330,7 @@ def auto_flares(star, bands, inst, label, dt=1.0, silent=False):
         t0, t1 = tedges[:-1], tedges[1:]
         curves.append([t0, t1, cps, err])
 
-    begs, ends, flares, Fpeaks, FpeakErrs, tpeaks, ratios = findflares(curves, silent=silent)
+    begs, ends, flares, Fpeaks, FpeakErrs, tpeaks, ratios, ratioerrs = findflares(curves, silent=silent)
 
     dist = sc.quickval(db.proppath, star, 'dist')
     pews, Es, pewratios, mnrate, mnflux = computeFlareStats(ph, begs, ends, flares, bands, dist)
@@ -1308,15 +1339,17 @@ def auto_flares(star, bands, inst, label, dt=1.0, silent=False):
 
     cfs = cumfreq(pews, expt)
 
-    data = [begs, ends, tpeaks, pews, flares, cfs, Es, pewratios, Fpeaks, FpeakErrs, ratios]
-    names = ['start', 'stop', 'peak', 'PEW', 'flare', 'cumfreq', 'energy', 'PEWratio', 'Fpk', 'Fpkerr', 'pkratio']
-    units = ['s', 's', 's', 's', '', 'd-1', 'erg', '', 'counts s-1', 'counts s-1', '']
+    data = [begs, ends, tpeaks, pews, flares, cfs, Es, pewratios, Fpeaks, FpeakErrs, ratios, ratioerrs]
+    names = ['start', 'stop', 'peak', 'PEW', 'flare', 'cumfreq', 'energy', 'PEWratio', 'Fpk', 'Fpkerr', 'pkratio',
+             'pkratioerr']
+    units = ['s', 's', 's', 's', '', 'd-1', 'erg', '', 'counts s-1', 'counts s-1', '', '']
     descriptions = ['start time of excursion referenced to MJD0', 'end time of excursion referenced to MJD0',
                     'time of flare peak referenced to MJD0',
                     'photometric equivalent width', 'excursion flagged as a flare',
                     'cumulative frequency of flares of >= PEW', 'absolute energy radiated by flare in band',
                     'ratio of the PEW to the minimum PEW measured in the lightcurve',
-                    'peak flux of flare', 'error in peak flux of flare', 'ratio of peak to quiescent flux']
+                    'peak flux of flare', 'error in peak flux of flare', 'ratio of peak to quiescent flux',
+                    'error in ratio of peak to quiescent flux']
     cols = []
     for d, n, u, dc in zip(data, names, units, descriptions):
         cols.append(Table.Column(d, n, unit=u, description=dc))
@@ -1336,13 +1369,13 @@ def auto_flares(star, bands, inst, label, dt=1.0, silent=False):
     flareTable.write(db.flarepath(star, inst, label), format='fits', overwrite=True)
 
 
-def matched_flare_stats(star, inst, bandlabels='all', masterband='broad130a', flarecut=None):
+def match_flares(star, inst, bandlabels='all', masterband='broad130a', flarecut=None):
     """
     Match the flares from the tables of flares for the bands sepcified by bandlables for specified star and instrument.
     Compute stats.
     """
     if bandlabels == 'all':
-        fs = db.findfiles(db.flaredir, inst, star, 'flares', fullpaths=True)
+        fs = db.findfiles(rc.flaredir, inst, star, 'flares', fullpaths=True)
         bandlabels = [db.parse_info(f, 4, 5) for f in fs]
     try:
         bandlabels.remove(masterband)
@@ -1351,12 +1384,19 @@ def matched_flare_stats(star, inst, bandlabels='all', masterband='broad130a', fl
 
     masterCat, _ = io.readFlareTbl(star, inst, masterband)
 
-    pkratios, pkoffsets, Eratios = {}, {}, {}
+    colnames = masterCat.colnames
+    masternames = [masterband + ' ' + name for name in colnames]
+    matchCat = Table(data=masterCat, names=masternames)
+
+    for band in bandlabels:
+        for name in colnames:
+            newname = band + ' ' + name
+            matchCat[newname] = np.nan
+
     for band in bandlabels:
         bandCat, _ = io.readFlareTbl(star, inst, band)
         bandRanges = np.array([bandCat['start'], bandCat['stop']]).T
-        pkratio, pkoffset, PEWratio = [], [], []
-        for flare in masterCat:
+        for i, flare in enumerate(masterCat):
             if flarecut is None and not flare['flare']:
                 continue
             if flarecut is not None and flare['PEWratio'] < flarecut:
@@ -1364,26 +1404,20 @@ def matched_flare_stats(star, inst, bandlabels='all', masterband='broad130a', fl
             masterRange = np.array([[flare['start'], flare['stop']]])
             duration = flare['stop'] - flare['start']
             overlapping, _ = utils.argoverlap(bandRanges, masterRange, 'loose')
-            slimCat = bandCat[overlapping]
+            slimCat = bandCat[overlapping & bandCat['flare']]
             overranges = zip(slimCat['start'], slimCat['stop'])
             overranges = mnp.range_intersect(overranges, [masterRange])
             overlap = overranges[:,1] - overranges[:,0]
-            if np.any(overlap/duration) > 0.5:
-                i = np.argmax(overlap)
-                pkratio.append(slimCat[i]['pkratio']/flare['pkratio'])
-                pkoffset.append(slimCat[i]['peak'] - flare['peak'])
-                PEWratio.append(slimCat[i]['PEW']/flare['PEW'])
-            else:
-                pkratio.append(np.nan); pkoffset.append(np.nan); PEWratio.append(np.nan)
-        pkratios[band] = pkratio
-        pkoffsets[band] = pkoffset
-        Eratios[band] = PEWratio
+            if np.any(overlap/duration) > 0.0:
+                j = np.argmax(overlap)
+                for name in bandCat.colnames:
+                    matchCat[i][band + ' ' + name] = slimCat[j][name]
 
-    return pkratios, pkoffsets, Eratios
+    return matchCat
 
 
 def combine_flarecats(bandname, inst, flarecut=1.0, stars='all'):
-    fs = db.findfiles(db.flaredir, inst, bandname, 'flares', fullpaths=True)
+    fs = db.findfiles(rc.flaredir, inst, bandname, 'flares', fullpaths=True)
     if stars != 'all':
         hasStar = lambda f: any([s in f for s in stars])
         fs = filter(hasStar, fs)

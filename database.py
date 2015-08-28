@@ -5,14 +5,15 @@ Created on Fri Nov 07 15:51:54 2014
 @author: Parke
 """
 import os
-from astropy.io import fits
-from pandas import read_pickle
 from mypy.my_numpy import midpts
 import numpy as np
-import io, settings
 from itertools import product as iterproduct
 from urllib import urlretrieve
 from math import ceil
+import json
+from astropy.io import fits
+from pandas import read_json
+import scicatalog.scicatalog as sc
 
 
 # new mac
@@ -22,18 +23,25 @@ root = gdrive + '/Grad School/Phd Work/MUSCLES'
 local = '/Users/rolo7566/Datasets/MUSCLES'
 datapath = local + '/data'
 productspath = local + '/products'
-solarpath = root + '/solar_data'
+scratchpath = root + '/scratchwork'
+solarpath = local + '/solar'
 photondir = datapath + '/photons'
 flaredir = productspath + '/flare_catalogs'
 proppath = root + '/share/starprops'
 moviepath = productspath + '/movies'
+sharepath = root + '/share'
 
+#TODO: clean this up -- move to using the starprops
+starprops = sc.SciCatalog(sharepath + '/starprops')
 target_list = root + '/share/target_list.txt'
 target_list_tex = root + '/share/target_list_tex.txt'
 observed_list = root + '/share/observed_list.txt'
 
 datafolders = ['x-ray', 'uv', 'visible', 'ir']
 bandmap = {'u':'uv', 'x':'x-ray', 'v':'visible', 'r':'ir'}
+
+stdbandpath = root + '/settings/stdbands.json'
+
 
 # old PC
 #datapath = r'C:\Users\Parke\Documents\Grad School\MUSCLES\Data'
@@ -51,6 +59,7 @@ with open(observed_list) as f:
 
 # -----------------------------------------------------------------------------
 # PHOENIX DATABASE
+phoenixbaseurl = 'ftp://phoenix.astro.physik.uni-goettingen.de/HiResFITS/PHOENIX-ACES-AGSS-COND-2011/'
 phxrepo = os.path.join(datapath, 'phoenix')
 phxTgrid = np.hstack([np.arange(2300,7000,100),
                    np.arange(7000,12001,200)])
@@ -62,8 +71,29 @@ phxgrids = [phxTgrid, phxggrid, phxZgrid, phxagrid]
 phxwave = fits.getdata(os.path.join(phxrepo, 'wavegrid_hires.fits'))
 phxwave = np.hstack([[499.95], midpts(phxwave), [54999.875]])
 
+def phxurl(Teff, logg=4.5, FeH=0.0, aM=0.0, repo='ftp'):
+    """
+    Constructs the URL for the phoenix spectrum file for a star with effective
+    temperature Teff, log surface gravity logg, metalicity FeH, and alpha
+    elemnt abundance aM.
+
+    Does not check that the URL is actually valid, and digits beyond the
+    precision of the numbers used in the path will be truncated.
+    """
+    zstr = '{:+4.1f}'.format(FeH)
+    if FeH == 0.0: zstr = '-' + zstr[1:]
+    astr = '.Alpha={:+5.2f}'.format(aM) if aM != 0.0 else ''
+    name = ('lte{T:05.0f}-{g:4.2f}{z}{a}.PHOENIX-ACES-AGSS-COND-2011-HiRes.fits'
+            ''.format(T=Teff, g=logg, z=zstr, a=astr))
+
+    if repo == 'ftp':
+        folder = 'Z' + zstr + astr + '/'
+        return phoenixbaseurl + folder + name
+    else:
+        return os.path.join(repo, name)
+
 def fetchphxfile(Teff, logg, FeH, aM, repo=phxrepo):
-    loc, ftp = [io.phxurl(Teff, logg, FeH, aM, repo=r) for r in [repo, 'ftp']]
+    loc, ftp = [phxurl(Teff, logg, FeH, aM, repo=r) for r in [repo, 'ftp']]
     urlretrieve(ftp, loc)
 
 def fetchphxfiles(Trng=[2500,3500], grng=[4.0,5.5], FeHrng=[0.0, 0.0],
@@ -89,9 +119,9 @@ def fetchphxfiles(Trng=[2500,3500], grng=[4.0,5.5], FeHrng=[0.0, 0.0],
     combos = iterproduct(*grids)
     paths = []
     for combo in combos:
-        locpath = io.phxurl(*combo, repo=repo)
+        locpath = phxurl(*combo, repo=repo)
         if not os.path.exists(locpath):
-            paths.append((locpath, io.phxurl(*combo, repo='ftp')))
+            paths.append((locpath, phxurl(*combo, repo='ftp')))
 
     N = len(paths)
     datasize = N*6.0/1024.0
@@ -198,7 +228,7 @@ def customfile(star, configstring):
         return f[0]
 
 
-isspec = lambda name: any([s in name for s in settings.specstrings])
+isspec = lambda name: any([s in name for s in specstrings])
 
 def allspecfiles(star):
     """Find all the spectra for the star within the subdirectories of path
@@ -227,7 +257,7 @@ def coaddgroups(star, nosingles=False):
     allfiles = allsourcefiles(star)
     allfiles = sub_customfiles(allfiles)
     filterfiles = lambda s: filter(lambda ss: s in ss, allfiles)
-    files = map(filterfiles, settings.instruments)
+    files = map(filterfiles, instruments)
     files = filter(len, files)
     if nosingles:
         files = filter(lambda x: len(x) > 1, files)
@@ -240,10 +270,10 @@ def panfiles(star):
     #FIXME: not replacing coadds properly for eps eri
 
     allfiles = allsourcefiles(star)
-    use = lambda name: any([s in name for s in settings.instruments])
+    use = lambda name: any([s in name for s in instruments])
     allfiles = filter(use, allfiles)
     filterfiles = lambda s: filter(lambda ss: s in ss, allfiles)
-    files = map(filterfiles, settings.instruments)
+    files = map(filterfiles, instruments)
     files = reduce(lambda x,y: x+y, files)
 
     #sub in custom extractions
@@ -337,7 +367,7 @@ def settingspath(star):
 def getinsti(filename):
     """Returns the numeric identifier for the instrument that created a
     spectrum based on the filename."""
-    return settings.getinsti(parse_instrument(filename))
+    return getinsti(parse_instrument(filename))
 
 def group_by_instrument(lst):
     """Group the spectbls by instrument, returning a list of the groups. Useful
@@ -380,7 +410,7 @@ def photonpath(filepath):
 
 
 def flarepath(star, inst, label):
-    inst = filter(lambda s: inst in s, settings.instruments)
+    inst = filter(lambda s: inst in s, instruments)
     assert len(inst) == 1
     inst = inst[0]
     name = '_'.join([inst, star, label, 'flares'])
@@ -511,3 +541,157 @@ def auto_rename(folder):
     if len(unchanged) > 0:
         print 'The following files could not be renamed:'
         for name in unchanged: print '    ' + name
+
+
+# -----------------------------------------------------------------------------
+# "SETTINGS"
+
+def seriousdqs(path):
+    if '_cos_' in path:
+        return fits.getval(path, 'sdqflags', 1)
+    if '_sts_' in path:
+        return (1 | 2 | 4 | 128 | 256 | 512 | 4096 | 8192)
+    else:
+        raise NotImplementedError('No serious dq flags defined for config\n{}'
+                                  ''.format(path))
+spectbl_format =  {'units' : ['Angstrom']*2 + ['erg/s/cm2/Angstrom']*2 + ['s','','','','d','d'],
+                   'dtypes' : ['f8']*5 + ['i2', 'i4'] + ['f8']*3,
+                   'fmts' : ['.2f']*2 + ['.2e']*2 + ['.1f', 'b', 'd', '.2f', '.2f', '.2f'],
+                   'descriptions' : ['left (short,blue) edge of the wavelength bin',
+                                     'right (long,red) edge of the wavelength bin',
+                                     'average flux over the bin',
+                                     'error on the flux',
+                                     'cumulative exposure time for the bin',
+                                     'data quality flags (specific to the instrument)',
+                                     'identifier for the instrument that is the source of the '
+                                     'data. use muscles.instruments[identifier] to determine '
+                                     'the instrument',
+                                     'noramlization factor applied to the '
+                                     'source spectrum',
+                                     'modified julian date of start of first exposure',
+                                     'modified julian date of end of last exposure'],
+                   'colnames' : ['w0','w1','flux','error','exptime','flags',
+                                 'instrument','normfac','minobsdate','maxobsdate']}
+
+stdbands = read_json(stdbandpath)
+
+prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m', 'sts_g430l',
+             'sts_g430m']
+
+lyacut = [1208.0, 1222.0]
+
+flare_bands = {#'hst_cos_g130m' : [[1169.5 , 1198.5 ], [1201.7 , 1212.17], [1219.17, 1271.19], [1324.83, 1426.08]],
+               #'hst_cos_g130m' : [[1324.83, 1426.08]],
+               'hst_cos_g130m' : [[1324.83, 1426.08]],
+               'hst_cos_g160m' : [[1422.92, 1563.85], [1614.02, 1754.01]]}
+
+specstrings = ['x1d', 'mod_euv', 'mod_lya', 'spec', 'sx1', 'mod_phx', 'coadd']
+#listed in normalization order
+instruments = ['hst_cos_g130m','hst_cos_g160m','hst_sts_g430l','hst_sts_g430m',
+               'hst_sts_g140m','hst_sts_e230m','hst_sts_e230h','hst_sts_g230l',
+               'hst_cos_g230l','hst_sts_e140m','mod_gap_fill-','mod_euv_-----',
+               'xmm_mos_-----','xmm_pn-_-----','mod_phx_-----','mod_lya_young',
+               'mod_euv_young']
+instvals = [2**i for i in range(len(instruments))]
+
+def getinststr(inst_val):
+    """Return the string version of an instrument value."""
+    return instruments[instvals.index(inst_val)]
+
+def getinsti(instrument):
+    """Return the identifying number for instrument, where instrument is
+    of the form, e.g., 'hst_cos_g130m'."""
+    try:
+        return instvals[instruments.index(instrument)]
+    except ValueError:
+        return -99
+
+def MASTlabels(name):
+    """
+    Return the MAST telescop and instrume values given a filename.
+    """
+    pass
+
+foldersbyband = {'u':'uv', 'v':'visible', 'r':'ir', 'x':'x-ray'}
+
+def dontnormalize(filename_or_spectbl):
+    fos = filename_or_spectbl
+    if type(fos) is not str:
+        fos = fos.meta['FILENAME']
+    isprenormed = [(s in fos) for s in prenormed]
+    return any(isprenormed)
+
+class StarSettings:
+    def __init__(self, star):
+        self.star = star
+        self.custom_extractions = []
+        self.reject_specs = []
+        self.notes = []
+        self.custom_ranges = {'configs':[], 'ranges':[]}
+        self.norm_ranges = {'configs':[], 'ranges':[]}
+
+    def add_custom_extraction(self, config, **kwds):
+        """Add a custom extraction os a config string and then kwds to provide
+        to the custom extraction function in reduce."""
+        d = {'config' : config, 'kwds' : kwds}
+        self.custom_extractions.append(d)
+
+    def add_custom_range(self, config, ranges):
+        """Add good wavelength range for a spectrum."""
+        self.custom_ranges['configs'].append(config)
+        self.custom_ranges['ranges'].append(ranges)
+
+    def add_norm_range(self, config, ranges):
+        """Add good wavelength range for a spectrum."""
+        self.norm_ranges['configs'].append(config)
+        self.norm_ranges['ranges'].append(ranges)
+
+    def get_custom_range(self, config):
+        configmatch = lambda s: s in config
+        configs = filter(configmatch, self.custom_ranges['configs'])
+        if len(configs) > 1:
+            raise ValueError('multiple custom range matches')
+        elif len(configs) == 1:
+            i = self.custom_ranges['configs'].index(configs[0])
+            return np.reshape(self.custom_ranges['ranges'][i], [-1, 2])
+        else:
+            return None
+
+    def get_norm_range(self, config):
+        configmatch = lambda s: s in config
+        configs = filter(configmatch, self.norm_ranges['configs'])
+        if len(configs) > 1:
+            raise ValueError('multiple custom range matches')
+        elif len(configs) == 1:
+            i = self.norm_ranges['configs'].index(configs[0])
+            return np.reshape(self.norm_ranges['ranges'][i], [-1, 2])
+        else:
+            return None
+
+    def add_reject(self, config, i=0):
+        """Add a spectrum to the reject list as a config string and number
+        specifying the segment/order to reject."""
+        self.reject_specs.append([config, i])
+
+    def save(self):
+        path = settingspath(self.star)
+        with open(path, 'w') as f:
+            json.dump(self.__dict__, f)
+
+def load(star):
+    path = settingspath(star)
+    with open(path) as f:
+        d = json.load(f)
+    def safeget(key):
+        if key in d:
+            return d[key]
+        else:
+            defaultobject = StarSettings('default')
+            return defaultobject.__dict__[key]
+    ss = StarSettings(star)
+    ss.custom_extractions = safeget('custom_extractions')
+    ss.notes = safeget('notes')
+    ss.reject_specs = safeget('reject_specs')
+    ss.custom_ranges = safeget('custom_ranges')
+    ss.norm_ranges = safeget('norm_ranges')
+    return ss

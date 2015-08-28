@@ -1,13 +1,147 @@
 # -*- coding: utf-8 -*-
 """
-Created on Mon Jan 19 13:08:18 2015
+Created on Fri Nov 07 15:51:54 2014
 
 @author: Parke
 """
+import os
+from mypy.my_numpy import midpts
+import numpy as np
+from itertools import product as iterproduct
+from urllib import urlretrieve
+from math import ceil
 import json
-from numpy import reshape
 from astropy.io import fits
 from pandas import read_json
+import scicatalog.scicatalog as sc
+
+
+# new mac
+gdrive = '/Users/rolo7566/Google Drive'
+codepath = gdrive + '/Python/muscles'
+root = gdrive + '/Grad School/Phd Work/MUSCLES'
+local = '/Users/rolo7566/Datasets/MUSCLES'
+datapath = local + '/data'
+productspath = local + '/products'
+scratchpath = root + '/scratchwork'
+solarpath = local + '/solar'
+photondir = datapath + '/photons'
+flaredir = productspath + '/flare_catalogs'
+proppath = root + '/share/starprops'
+moviepath = productspath + '/movies'
+filterpath = '/Users/rolo7566/Datasets/shared/filter response curves'
+
+starprops = sc.SciCatalog(proppath, readOnly=True, silent=True)
+
+datafolders = ['x-ray', 'uv', 'visible', 'ir']
+bandmap = {'u':'uv', 'x':'x-ray', 'v':'visible', 'r':'ir'}
+
+stdbandpath = root + '/settings/stdbands.json'
+
+
+# old PC
+#datapath = r'C:\Users\Parke\Documents\Grad School\MUSCLES\Data'
+#productspath = r'C:\Users\Parke\Documents\Grad School\MUSCLES\Products'
+#codepath = r'C:\Users\Parke\Google Drive\Python\muscles'
+#root = r'C:\Users\Parke\Google Drive\Grad School\PhD Work\MUSCLES'
+
+
+stars = starprops.indices()
+observed = [star for star in stars if starprops['observed'][star]]
+
+
+# -----------------------------------------------------------------------------
+# PHOENIX DATABASE
+phoenixbaseurl = 'ftp://phoenix.astro.physik.uni-goettingen.de/HiResFITS/PHOENIX-ACES-AGSS-COND-2011/'
+phxrepo = os.path.join(datapath, 'phoenix')
+phxTgrid = np.hstack([np.arange(2300,7000,100),
+                   np.arange(7000,12001,200)])
+phxggrid = np.arange(0.0, 6.1, 0.5)
+phxZgrid = np.hstack([np.arange(-4.0, -2.0, 1.0),
+                   np.arange(-2.0, 1.1, 0.5)])
+phxagrid = np.arange(-0.2, 1.3, 0.2)
+phxgrids = [phxTgrid, phxggrid, phxZgrid, phxagrid]
+phxwave = fits.getdata(os.path.join(phxrepo, 'wavegrid_hires.fits'))
+phxwave = np.hstack([[499.95], midpts(phxwave), [54999.875]])
+
+
+def phxurl(Teff, logg=4.5, FeH=0.0, aM=0.0, repo='ftp'):
+    """
+    Constructs the URL for the phoenix spectrum file for a star with effective
+    temperature Teff, log surface gravity logg, metalicity FeH, and alpha
+    elemnt abundance aM.
+
+    Does not check that the URL is actually valid, and digits beyond the
+    precision of the numbers used in the path will be truncated.
+    """
+    zstr = '{:+4.1f}'.format(FeH)
+    if FeH == 0.0: zstr = '-' + zstr[1:]
+    astr = '.Alpha={:+5.2f}'.format(aM) if aM != 0.0 else ''
+    name = ('lte{T:05.0f}-{g:4.2f}{z}{a}.PHOENIX-ACES-AGSS-COND-2011-HiRes.fits'
+            ''.format(T=Teff, g=logg, z=zstr, a=astr))
+
+    if repo == 'ftp':
+        folder = 'Z' + zstr + astr + '/'
+        return phoenixbaseurl + folder + name
+    else:
+        return os.path.join(repo, name)
+
+def fetchphxfile(Teff, logg, FeH, aM, repo=phxrepo):
+    loc, ftp = [phxurl(Teff, logg, FeH, aM, repo=r) for r in [repo, 'ftp']]
+    urlretrieve(ftp, loc)
+
+def fetchphxfiles(Trng=[2500,3500], grng=[4.0,5.5], FeHrng=[0.0, 0.0],
+                  aMrng=[0.0, 0.0], repo=phxrepo):
+    """
+    Download all Phoenix spectra covering the provided ranges. Does not
+    re-download files that already exist in the directory.
+
+    Default values are from UV variability sample properties.
+    """
+    def makerng(x, grid):
+        if not hasattr(x, '__iter__'):
+            x = [np.max(grid[grid < x]), np.min(grid[grid > x])]
+        return x
+    rngs = [Trng, grng, FeHrng, aMrng]
+    rngs = map(makerng, rngs, phxgrids)
+
+    def inclusive(grid, rng):
+        use = np.logical_and(grid >= rng[0], grid <= rng[1])
+        return grid[use]
+    grids = map(inclusive, phxgrids, rngs)
+
+    combos = iterproduct(*grids)
+    paths = []
+    for combo in combos:
+        locpath = phxurl(*combo, repo=repo)
+        if not os.path.exists(locpath):
+            paths.append((locpath, phxurl(*combo, repo='ftp')))
+
+    N = len(paths)
+    datasize = N*6.0/1024.0
+    print ('Beginning download of {} files, {:.3f} Gb. Ctrl-C to stop.'
+           ''.format(N,datasize))
+    print 'Progress bar (- = 5%):\n'
+
+    Nbar = ceil(N/20.0)
+    for i,(loc, ftp) in enumerate(paths):
+        if i % Nbar == 0:
+            print '-',
+        urlretrieve(ftp,loc)
+
+def phxpath(star):
+    """Standard name for interpolated phoenix spectrum."""
+    name = 'r_mod_phx_-----_{}_interpolated.fits'.format(star)
+    return os.path.join(datapath, 'ir', name)
+
+# -----------------------------------------------------------------------------
+# AIRGLOW LINES
+
+airglow_path = os.path.join(root, 'airglow_ranges.csv')
+airglow_ranges = np.loadtxt(airglow_path, delimiter=',')
+
+# -----------------------------------------------------------------------------
+# "SETTINGS"
 
 def seriousdqs(path):
     if '_cos_' in path:
@@ -36,7 +170,7 @@ spectbl_format =  {'units' : ['Angstrom']*2 + ['erg/s/cm2/Angstrom']*2 + ['s',''
                    'colnames' : ['w0','w1','flux','error','exptime','flags',
                                  'instrument','normfac','minobsdate','maxobsdate']}
 
-stdbands = read_json(rc.stdbandpath)
+stdbands = read_json(stdbandpath)
 
 prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m', 'sts_g430l',
              'sts_g430m']
@@ -81,8 +215,17 @@ def dontnormalize(filename_or_spectbl):
     fos = filename_or_spectbl
     if type(fos) is not str:
         fos = fos.meta['FILENAME']
-    isprenormed = [(s in fos) for s in prenormed]
+    star = fos.split('_')[4]
+    sets = loadsettings(star)
+    pn = prenormed if sets.prenormed == [] else sets.prenormed
+    isprenormed = [(s in fos) for s in pn]
     return any(isprenormed)
+
+
+def settingspath(star):
+    """The path for the settings file for a star."""
+    return os.path.join(root, 'settings', star + '.json')
+
 
 class StarSettings:
     def __init__(self, star):
@@ -92,6 +235,9 @@ class StarSettings:
         self.notes = []
         self.custom_ranges = {'configs':[], 'ranges':[]}
         self.norm_ranges = {'configs':[], 'ranges':[]}
+        self.norm_order = []
+        self.prenormed = []
+        self.weird_norm = {}
 
     def add_custom_extraction(self, config, **kwds):
         """Add a custom extraction os a config string and then kwds to provide
@@ -116,7 +262,7 @@ class StarSettings:
             raise ValueError('multiple custom range matches')
         elif len(configs) == 1:
             i = self.custom_ranges['configs'].index(configs[0])
-            return reshape(self.custom_ranges['ranges'][i], [-1, 2])
+            return np.reshape(self.custom_ranges['ranges'][i], [-1, 2])
         else:
             return None
 
@@ -127,7 +273,7 @@ class StarSettings:
             raise ValueError('multiple custom range matches')
         elif len(configs) == 1:
             i = self.norm_ranges['configs'].index(configs[0])
-            return reshape(self.norm_ranges['ranges'][i], [-1, 2])
+            return np.reshape(self.norm_ranges['ranges'][i], [-1, 2])
         else:
             return None
 
@@ -137,12 +283,12 @@ class StarSettings:
         self.reject_specs.append([config, i])
 
     def save(self):
-        path = rc.settingspath(self.star)
+        path = settingspath(self.star)
         with open(path, 'w') as f:
             json.dump(self.__dict__, f)
 
-def load(star):
-    path = rc.settingspath(star)
+def loadsettings(star):
+    path = settingspath(star)
     with open(path) as f:
         d = json.load(f)
     def safeget(key):
@@ -157,4 +303,7 @@ def load(star):
     ss.reject_specs = safeget('reject_specs')
     ss.custom_ranges = safeget('custom_ranges')
     ss.norm_ranges = safeget('norm_ranges')
+    ss.norm_order = safeget('norm_order')
+    ss.prenormed = safeget('prenormed')
+    ss.weird_norm = safeget('weird_norm')
     return ss

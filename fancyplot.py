@@ -1,24 +1,27 @@
 import mypy.plotutils as pu
-import plot as mplt
 import matplotlib.pyplot as plt
 import scicatalog.scicatalog as sc
-import database as db
-import numpy as np
 import os
 import mypy.my_numpy as mnp
-from reduce import auto_curve
-import settings
-import io, reduce
+import rc, io, reduce, db
 import matplotlib as mpl
 import itertools
 import uneven.functions as un
 import spectralPhoton.functions as sp
 import numpy as np
+import spectralPhoton.functions as sp
+from astropy.io import fits
+
+linestyles = itertools.cycle(['-', '--', ':', '.-'])
+linefluxlabel = '$\lambda$-Integrated Flux \n[erg cm$^{-2}$ s$^{-1}$]'
+fluxlabel = 'Flux [erg cm$^{-2}$ s$^{-1}$ $\AA^{-1}$]'
+
+starprops = sc.SciCatalog(rc.proppath, readOnly=True)
 
 def stars3DMovieFrames(size, azRate=1.0, altRate=0.0, frames=360, dirpath='muscles_stars_movie_frames'):
     from mayavi import mlab
 
-    starprops = sc.SciCatalog(db.proppath, readOnly=True)
+    starprops = sc.SciCatalog(rc.proppath, readOnly=True)
     ra, dec, dist, r, T, names = [starprops.values[s] for s in ['RA', 'dec', 'dist', 'R', 'Teff', 'name txt']]
 
     labels = names.values
@@ -53,8 +56,8 @@ def lightcurveCompendium(stars='hosts', figure=None, flarecut=2.0, flarelabel='S
         colors = itertools.cycle(['k'])
     inst = 'hst_cos_g130m'
     if stars == 'hosts':
-        stars = filter(lambda s: len(db.findfiles('u', inst, 'corrtag_a', s)) >= 4, db.observed)
-    starprops = sc.SciCatalog(db.proppath, readOnly=True)
+        stars = filter(lambda s: len(db.findfiles('u', inst, 'corrtag_a', s)) >= 4, rc.observed)
+    starprops = sc.SciCatalog(rc.proppath, readOnly=True)
 
     ## SET UP AXES
     ## -----------
@@ -77,13 +80,13 @@ def lightcurveCompendium(stars='hosts', figure=None, flarecut=2.0, flarelabel='S
 
     ## MAKE LIGHTCURVES
     ## ----------------
-    bands = settings.flare_bands[inst]
+    bands = rc.flare_bands[inst]
     offset, offsets = 0.0, []
     for star, color in zip(stars, colors):
         # get flare info
         flares, bands = io.readFlareTbl(star, inst, flarelabel)
 
-        curve = auto_curve(star, inst, dt=30.0, bands=bands, groups=[range(len(bands))])
+        curve = reduce.auto_curve(star, inst, dt=30.0, bands=bands, groups=[range(len(bands))])
         t0, t1, cps, err = zip(*curve)[0]
 
         t = (t0 + t1) / 2.0
@@ -147,58 +150,107 @@ def lightcurveCompendium(stars='hosts', figure=None, flarecut=2.0, flarelabel='S
     ax.axhline(0, color='k')
     ax.set_xlabel('Time, Observation Gaps Shortened (s)')
 
-def cumFlareFreq(band='SiIV', inst='cos_g130m', stars='all', metric='both', ax=None, fits=False):
-    flarecat = reduce.combine_flarecats(band, inst, stars=stars)
+def cumFlareFreq(band='SiIV', inst='cos_g130m', stars='all', metric='energy', ax=None, fits=False, flarecut=1.0,
+                 **kwargs):
+    flarecat = reduce.combine_flarecats(band, inst, flarecut, stars=stars)
     ax = plt.gca() if ax is None else ax
     ax.set_ylabel('Cumulative Frequency, $\\nu$ [d$^{-1}$]')
+    ax.set_xscale('log')
+    ax.set_yscale('log')
 
-    xlabelPEW = 'Luminosity-Normed Flare Energy, $P$ (Photometric Equiv. Width) [s]'
-    xlabelE = 'Absolute Flare Energy, $E$ [erg]'
     if metric == 'both':
-        pP = ax.loglog(flarecat['PEW'], flarecat['cumfreqPEW'], 'bo')
-        ax.set_xlabel(xlabelPEW, color='b')
-        for tl in ax.get_xticklabels():
-            tl.set_color('b')
-        if fits:
-            x, y, lbl = _plotPowFit(flarecat['PEW'], flarecat['cumfreqPEW'], ax, '$P$', color='b')
-            ax.text(x*1.3, y*1.3, lbl, color='b')
-
+        cumFlareFreq(band, inst, stars, 'PEW', ax, fits, **kwargs)
         ax2 = ax.twiny()
-        pE = ax2.loglog(flarecat['energy'], flarecat['cumfreqE'], 'rd')
-        ax2.set_xlabel(xlabelE, color='r')
+        ax2.xaxis.set_ticks_position('top')
         ax2.xaxis.set_label_position('top')
-        for tl in ax2.get_xticklabels():
-            tl.set_color('r')
-        if fits:
-            x, y, lbl = _plotPowFit(flarecat['energy'], flarecat['cumfreqE'], ax, '$E$', color='r')
-            ax.text(x/1.3, y/1.3, lbl, color='r', va='top', ha='right')
-
-        return ax2
-
+        cumFlareFreq(band, inst, stars, 'energy', ax2, fits, ls='--', **kwargs)
+        ax2.text(0.95, 0.95, 'dashed - abs. energy\nsolid - phot. equiv. width', ha='right',
+                 va='top', transform=ax2.transAxes)
+        return
     if metric == 'PEW':
-        ax.loglog(flarecat['PEW'], flarecat['cumfreqPEW'], 'ko')
-        ax.set_xlabel(xlabelPEW)
-        if fits:
-            x, y, lbl = _plotPowFit(flarecat['PEW'], flarecat['cumfreqPEW'], ax, '$P$', color='k')
-            ax.text(1.3*x, 1.3*y, lbl)
-
+        xkey, var = 'cumfreqPEW', 'P'
+        ax.set_xlabel('Luminosity-Normed Flare Energy, $P$ (Photometric Equiv. Width) [s]')
     if metric == 'energy':
-        ax.loglog(flarecat['energy'], flarecat['cumfreqE'], 'ko')
-        ax.set_xlabel(xlabelE)
-        if fits:
-            x, y, lbl = _plotPowFit(flarecat['energy'], flarecat['cumfreqE'], ax, '$E$', color='k')
-            ax.text(1.3*x, 1.3*y, lbl)
+        xkey, var = 'cumfreqE', 'E'
+        ax.set_xlabel('Absolute Flare Energy, $E$ [erg]')
+
+    flarecat.sort(metric)
+    line = ax.step(flarecat[metric], flarecat[xkey], where='post', **kwargs)[0]
+    if fits:
+        x, y, lbl, fitline = _plotPowFit(flarecat[metric], flarecat[xkey], ax, var, alpha=0.5,
+                                         **kwargs)
+        fitlbl = ax.text(1.3*x, 1.3*y, lbl)
+        return line, fitline, fitlbl
+    else:
+        return line
+
 
 def _plotPowFit(x, freq, ax, yvar, **kwargs):
-    a, err = un.powfit(x)
+    a, _ = un.powfit(x)
+
     # clooge up a normalization factor by minimizing the squared deviations
-    norm = np.sum(freq * x**(-a)) / np.sum(x**(-2*a))
-    xplt = np.array([x.min(), x.max()])
+    # norm = np.sum(freq * x**(-a)) / np.sum(x**(-2*a))
+
+    # clooge up a normaliation factor by equating the integrals
+    xlo, xhi = x.min(), x.max()
+    S = np.sum(np.diff(x) * freq[1:])
+    A = -a + 1
+    norm = S*A / (xhi**A - xlo**A)
+
+    xplt = np.array([xlo, xhi])
     fplt = norm * xplt**-a
-    ax.plot(xplt, fplt, **kwargs)
+    line = ax.plot(xplt, fplt, **kwargs)[0]
     xmid, fmid = np.sqrt(xplt.prod()), np.sqrt(fplt.prod())
-    label = '$\\nu \sim %s^{-%.2f \\pm %.2f}$' % (yvar, a, err)
-    return xmid, fmid, label
+    label = '$\\nu \sim %s^{-%.2f}$' % (yvar, a)
+
+    return xmid, fmid, label, line
+
+
+def flareCompare(inst='cos_g130m', band='SiIV', nflares=3, ax=None):
+    if ax is None: ax = plt.gca()
+    ax.set_xlabel('Time [s]')
+    ax.set_ylabel('Normalized Flux')
+
+    flares = reduce.combine_flarecats(band, inst)
+    flares = flares[:nflares]
+    bands, dt = flares.meta['BANDS'], flares.meta['DT']
+    groups = [range(len(bands))]
+
+    mxpeak = max(flares['pkratio'])
+
+    # plot all curves
+    lines, labels = [], []
+    for flare in flares:
+        star = flare['star']
+        label = starprops['name tex'][star]
+
+        # curve = reduce.auto_curve(star, inst, bands=bands, dt=dt, appx=False, groups=groups)
+        # t0, t1, cps, cpserr = zip(*curve)[0]
+        ph, p = io.readphotons(star, inst)
+        t0, t1, cps, cpserr = sp.smooth_curve(p['time'], p['wavelength'], p['epsilon'], bands=bands, n=100)
+
+        tmid = (t0 + t1) / 2.0
+        t = tmid - flare['peak rel']
+
+        qcps = fits.getval(rc.flarepath(star, inst, 'SiIV'), 'QSCTCPS', ext=1)
+        rate, err = cps/qcps, cpserr/qcps
+
+        fac = 10.0**np.floor(np.log10(mxpeak / flare['pkratio']))
+        if fac > 1.0:
+            label += ' $\\times$%i' % fac
+            rate = (rate - 1.0)*fac + 1.0
+            err = err*fac
+
+        # line = ax.plot(t, rate, '-')[0]
+        # ax.errorbar(t, rate, err, fmt='.', color=line.get_color(), capsize=0)
+        line, poly = pu.errorpoly(t, rate, err, ax=ax)
+        lines.append(line); labels.append(label)
+
+    ax.legend(lines, labels, loc='best', fontsize='small')
+
+    starts, stops = flares['start rel'] - flares['peak rel'], flares['stop rel'] - flares['peak rel']
+    ax.set_xlim(min(starts)*1.5, max(stops))
+
 
 def spectrumMovieFrames(star, inst, band, trange, dt, smoothfac, axspec, axcurve, folder, dpi=80, velocityplot=False,
                         reftrange=None, dryRun=False, ylim=None):
@@ -269,7 +321,7 @@ def spectrumMovieFrames(star, inst, band, trange, dt, smoothfac, axspec, axcurve
     else:
         axspec.set_xlabel('Wavelength [$\AA$]')
         axspec.set_xlim(band)
-    axspec.set_ylabel('Flux [erg cm$^{-2}$ s$^{-1}$ $\AA^{-1}$]')
+    axspec.set_ylabel(fluxlabel)
     if ylim is None:
         ymin = min([np.min(s-e) for s,e in zip(specList, errList)])
         ymax = max([np.max(s+e) for s,e in zip(specList, errList)])
@@ -360,7 +412,7 @@ def showFlareStats(star, inst, label, trange, dt=30.0, ax=None):
 
     # reverse-engineer mean flux
     luminosity = flare['energy'] / flare['PEW']
-    dist = sc.quickval(db.proppath, star, 'dist')
+    dist = sc.quickval(rc.proppath, star, 'dist')
     mnflux = luminosity / 4 / np.pi / (dist * 3.08567758e18)**2
 
     # plot mean flux
@@ -387,6 +439,76 @@ def showFlareStats(star, inst, label, trange, dt=30.0, ax=None):
 
     # axes
     ax.set_xlabel('Time [s]')
-    ax.set_ylabel('$\lambda$-Integrated Flux \n[erg cm$^{-2}$ s$^{-1}$]')
+    ax.set_ylabel(linefluxlabel)
 
 
+def multiBandCurves(star='gj832', inst='cos_g130m', trange=[24400, 24900], n=100, tref=24625.0,
+                    bandnames=['NV', 'SiIV', 'SiIII', 'CII', 'cont1380'], ax=None, norms=None, fluxed=False):
+    if ax is None: ax = plt.gca()
+    ph, p = io.readphotons(star, inst)
+    p['time'] -= tref
+    trange = np.array(trange) - tref
+
+    ax.set_xlabel('Time [s]')
+    ax.set_xlim(trange)
+    if fluxed:
+        wtkey = 'epera'
+        ax.set_ylabel(linefluxlabel)
+    else:
+        wtkey = 'epsilon'
+        ax.set_ylabel('Count Rate [s$^{-1}$]')
+    if norms is not None:
+        ax.set_ylabel('Normalized Flux')
+
+    lines, labels = [], []
+    for i, name in enumerate(bandnames):
+        bands = rc.stdbands.loc[name, 'bands']
+        label = rc.stdbands.loc[name, 'name txt']
+        Tform = rc.stdbands.loc[name, 'Tform']
+        # wavelbl = rc.stdbands.loc[name, 'wave lbl']
+        # label += ' ' + wavelbl
+        if not np.isnan(Tform):
+            label += '  ({:.1f})'.format(Tform)
+
+        t0, t1, rate, err = sp.smooth_curve(p['time'], p['wavelength'], p[wtkey], n=n, bands=bands)
+        t = (t0 + t1) / 2.0
+        keep = (t1 > trange[0]) & (t0 < trange[1])
+        t, rate, err = t[keep], rate[keep], err[keep]
+        if norms is not None:
+            rate /= norms[i]
+        line, poly = pu.errorpoly(t, rate, err, ealpha=0.2)
+        lines.append(line)
+        labels.append(label)
+
+    ax.legend(lines, labels, loc='best', fontsize='small')
+
+
+def specSnapshot(star, inst, trange, wrange, n=100, ax=None, vCen=None, **kwargs):
+    if ax is None: ax = plt.gca()
+    ph, p = io.readphotons(star, inst)
+    keep = mnp.inranges(p['time'], trange)
+    p = p[keep]
+
+    gtis = np.array([ph['gti'].data['start'], ph['gti'].data['stop']]).T
+    gt = mnp.range_intersect([trange], gtis)
+    dt = np.sum(gt[:,1] - gt[:,0])
+
+    w0, w1, spec, err = sp.smooth_spec(p['wavelength'], p['epera'], n)
+    spec, err = spec/dt, err/dt
+    w = (w0 + w1) / 2.0
+
+    keep, = np.nonzero(mnp.inranges(w, wrange))
+    keep = np.insert(keep, [0, len(keep)], [keep[0]-1, keep[-1]+1])
+    w, spec, err = w[keep], spec[keep], err[keep]
+
+    velocify = lambda w: (w - vCen) / vCen * 3e5
+    if vCen is not None:
+        w = velocify(w)
+        ax.set_xlabel('Doppler Velocity [km s$^{-1}$]')
+        ax.set_xlim(map(velocify, wrange))
+    else:
+        ax.set_xlabel('Wavelength [$\AA$]')
+        ax.set_xlim(wrange)
+    ax.set_ylabel(fluxlabel)
+
+    return pu.errorpoly(w, spec, err, **kwargs)
