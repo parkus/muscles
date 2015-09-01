@@ -1,5 +1,5 @@
 import netCDF4 as nc
-from .. import database as db
+from .. import rc
 from os import path
 import numpy as np
 import mypy.my_numpy as mnp
