@@ -282,19 +282,13 @@ def writefits(spectbl, name, overwrite=False):
         cols = [fits.Column('instruments','13A', array=rc.instruments),
                 fits.Column('bitvalues', 'I', array=rc.instvals)]
         hdr = fits.Header()
-        hdr['comment'] = ('This extension is a legend for the integer '
-                          'identifiers in the instrument '
-                          'column of the previous extension. Instruments '
-                          'are identified by bitwise flags so that they '
-                          'any combination of instruments contributing to '
-                          'the data wihtin a spectral element can be '
-                          'identified together. For example, if instruments '
-                          '4 and 16, 100 and 10000 in binary, both contribute '
-                          'to the data in a bin, then that bin will have the '
-                          'value 20, or 10100 in binary, to signify that '
-                          'both instruments 4 and 16 have contributed. '
-                          'This is identical to the handling of bitwise '
-                          'data quality flags.')
+        hdr['comment'] = ('This extension is a legend for the integer identifiers in the instrument column of the '
+                          'previous extension. Instruments are identified by bitwise flags so that any combination of '
+                          'instruments contributing to the data wihtin a spectral element can be identified together. '
+                          'For example, if instruments 4 and 16 (100 and 10000 in binary) both contribute to the data '
+                          'in a bin, then that bin will have the value 20, or 10100 in binary, to signify that both '
+                          'instruments 4 and 16 have contributed. This is identical to the handling of bitwise data '
+                          'quality flags.')
         idhdu = fits.BinTableHDU.from_columns(cols, header=hdr, name='legend')
         ftbl.append(idhdu)
 
@@ -364,7 +358,7 @@ def write_simple_ascii(spectbl, name, key='flux', overwrite=False):
 
 def writeMAST(spectbl, name, overwrite=False):
     """
-    Writes spectbls to a standardized MUSCLES FITS file format that also
+    Writes spectbl to a standardized MUSCLES FITS file format that also
     includes all the keywords required for the archive.
 
     Parameters
