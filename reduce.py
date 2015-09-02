@@ -842,7 +842,7 @@ def auto_customspec(star, silent=False):
                 norm = 1.0
                 datalist.extend([expt, spec['dq'], inst, norm, start, end])
 
-                spectbl = utils.list2spectbl(datalist, star, specfile, '', [x2dfile])
+                spectbl = utils.list2spectbl(datalist, star, specfile, '', [os.path.basename(x2dfile)])
                 for key in meta:
                     spectbl.meta[key] = meta[key]
 
