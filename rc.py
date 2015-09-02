@@ -15,6 +15,7 @@ from astropy.io import fits
 from pandas import read_json
 import scicatalog.scicatalog as sc
 
+version = '0.0'
 
 # new mac
 gdrive = '/Users/rolo7566/Google Drive'
