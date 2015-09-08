@@ -1,6 +1,5 @@
 import mypy.plotutils as pu
 import matplotlib.pyplot as plt
-import scicatalog.scicatalog as sc
 import os
 import mypy.my_numpy as mnp
 import rc, io, reduce, db
@@ -16,12 +15,11 @@ linestyles = itertools.cycle(['-', '--', ':', '.-'])
 linefluxlabel = '$\lambda$-Integrated Flux \n[erg cm$^{-2}$ s$^{-1}$]'
 fluxlabel = 'Flux [erg cm$^{-2}$ s$^{-1}$ $\AA^{-1}$]'
 
-starprops = sc.SciCatalog(rc.proppath, readOnly=True)
+starprops = rc.starprops
 
 def stars3DMovieFrames(size, azRate=1.0, altRate=0.0, frames=360, dirpath='muscles_stars_movie_frames'):
     from mayavi import mlab
 
-    starprops = sc.SciCatalog(rc.proppath, readOnly=True)
     ra, dec, dist, r, T, names = [starprops.values[s] for s in ['RA', 'dec', 'dist', 'R', 'Teff', 'name txt']]
 
     labels = names.values
@@ -57,7 +55,6 @@ def lightcurveCompendium(stars='hosts', figure=None, flarecut=2.0, flarelabel='S
     inst = 'hst_cos_g130m'
     if stars == 'hosts':
         stars = filter(lambda s: len(db.findfiles('u', inst, 'corrtag_a', s)) >= 4, rc.observed)
-    starprops = sc.SciCatalog(rc.proppath, readOnly=True)
 
     ## SET UP AXES
     ## -----------

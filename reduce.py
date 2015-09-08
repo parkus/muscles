@@ -18,7 +18,6 @@ import spectralPhoton.functions as sp
 from itertools import combinations_with_replacement as combos
 from scipy.stats import norm
 from warnings import warn
-import scicatalog.scicatalog as sc
 
 colnames = rc.spectbl_format['colnames']
 airglow_ranges = rc.airglow_ranges
@@ -149,8 +148,10 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=True,
                 normfac = refspec[0]['normfac']
             else:
                 overlap = utils.overlapping(spec, addspec)
-                if not overlap and not silent:
-                    print '\tno overlap, so won\'t normalize'
+                if not overlap:
+                    normfac = 1.0
+                    if not silent:
+                        print '\tno overlap, so won\'t normalize'
                 if overlap:
                     if not silent:
                         print '\tnormalizing within the overlap'
@@ -1332,7 +1333,7 @@ def auto_flares(star, bands, inst, label, dt=1.0, silent=False):
 
     begs, ends, flares, Fpeaks, FpeakErrs, tpeaks, ratios, ratioerrs = findflares(curves, silent=silent)
 
-    dist = sc.quickval(db.proppath, star, 'dist')
+    dist = rc.starprops['dist'][star]
     pews, Es, pewratios, mnrate, mnflux = computeFlareStats(ph, begs, ends, flares, bands, dist)
 
     assert pews.min() < 0

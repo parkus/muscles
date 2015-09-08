@@ -7,6 +7,7 @@ from astropy.io import fits
 def findfiles(path_or_band, *substrings, **kwargs):
     """Look for a files in directory at path that contains ALL of the strings
     in substrings in its filename. Add fullpaths=True if desired."""
+
     if not os.path.exists(path_or_band):
         band = path_or_band if len(path_or_band) > 1 else rc.bandmap[path_or_band]
         path_or_band = rc.datapath + '/' + band
@@ -206,7 +207,7 @@ def parse_paninfo(filename):
 
 def parse_name(filename):
     name = os.path.basename(filename)
-    return name.split('.')[0]
+    return '.'.join(name.split('.')[:-1])
 
 
 def allpans(star):
@@ -290,6 +291,34 @@ def flarepath(star, inst, label):
     inst = inst[0]
     name = '_'.join([inst, star, label, 'flares'])
     return os.path.join(rc.flaredir, name + '.fits')
+
+
+def hlsppath(name):
+
+    star = parse_star(name)
+
+    if 'panspec' in name:
+        tel = 'multi'
+        inst = 'multi'
+        filt = 'multi'
+        product = 'sed'
+        if 'native' in name:
+            inst += '-variable-resolution'
+        elif 'constant_dR' in name:
+            i0 = name.find('dR=') + 3
+            i1 = name.find(' ang')
+            res = name[i0:i1]
+            inst += '-const-resolution-{}-ang'.format(res)
+    else:
+        tel, inst, filt = parse_instrument(name).split('_')
+        tel = rc.HLSPtelescopes[tel].lower()
+        inst = rc.HLSPinstruments[inst].lower()
+        filt = rc.HLSPgratings[filt].lower()
+        product = 'component-spectrum'
+
+    name = ('hlsp_muscles_{tel}_{inst}_{star}_{filter}_{version}_{product}.fits'
+            ''.format(tel=tel, inst=inst, star=star, filter=filt, version=rc.version, product=product))
+    return os.path.join(rc.hlsppath, name)
 
 
 def auto_rename(folder):

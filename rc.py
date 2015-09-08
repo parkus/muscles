@@ -24,6 +24,7 @@ root = gdrive + '/Grad School/Phd Work/MUSCLES'
 local = '/Users/rolo7566/Datasets/MUSCLES'
 datapath = local + '/data'
 productspath = local + '/products'
+hlsppath = productspath + '/hlsp'
 scratchpath = root + '/scratchwork'
 solarpath = local + '/solar'
 photondir = datapath + '/photons'
@@ -191,6 +192,14 @@ instruments = ['hst_cos_g130m','hst_cos_g160m','hst_sts_g430l','hst_sts_g430m',
                'xmm_mos_-----','xmm_pn-_-----','mod_phx_-----','mod_lya_young',
                'mod_euv_young']
 instvals = [2**i for i in range(len(instruments))]
+
+# for use in making FITS headers
+HLSPtelescopes = {'hst':'HST', 'cxo':'CXO', 'xmm':'XMM', 'mod':'MOD'}
+HLSPinstruments = {'cos':'COS', 'sts':'STIS', 'euv':'EUV-ESTIMATE', 'lya':'LYA-RECONSTRUCTION', 'phx':'PHX',
+                   'mos':'MOS', 'pn-':'PN', 'gap':'POLYNOMIAL-FIT'}
+HLSPgratings = {'g130m':'G130M', 'g160m':'G160M', 'g430l':'G430L', 'g430m':'G430M', 'g140m':'G140M', 'e230m':'E230M',
+                'e230h':'E230H', 'g230l':'G230L', 'e140m':'E140M', 'fill-':'NA', '-----':'NA', 'young':'NA'}
+
 
 def getinststr(inst_val):
     """Return the string version of an instrument value."""

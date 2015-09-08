@@ -15,6 +15,13 @@ from astropy.table import Table
 from astropy.time import Time
 from warnings import warn
 
+legendcomment = ('This extension is a legend for the integer identifiers in the instrument column of the '
+                  'spectrum extension. Instruments are identified by bitwise flags so that any combination of '
+                  'instruments contributing to the data within a spectral element can be identified together. '
+                  'For example, if instruments 4 and 16 (100 and 10000 in binary) both contribute to the data '
+                  'in a bin, then that bin will have the value 20, or 10100 in binary, to signify that both '
+                  'instruments 4 and 16 have contributed. This is identical to the handling of bitwise data '
+                  'quality flags.')
 
 def readphotons(star, inst):
     pf = db.findfiles('photons', star, inst, fullpaths=True)
@@ -151,11 +158,11 @@ def readfits(specfile):
 
         optel = db.parse_spectrograph(specfile)
         if optel == 'pn-':
-            expt = sh['spec_exptime_pn']
+            expt = sh['spec_exptime_pn'] * 1000.0
             start = Time(sh['pn_date-obs']).mjd
             end = Time(sh['pn_date-end']).mjd
         if optel == 'mos':
-            expt = (sh['spec_exptime_mos1'] + sh['spec_exptime_mos2']) / 2.0
+            expt = (sh['spec_exptime_mos1'] + sh['spec_exptime_mos2']) / 2.0 * 1000.0
             start1 = Time(sh['mos1_date-obs']).mjd
             start2 = Time(sh['mos2_date-obs']).mjd
             end1 = Time(sh['mos1_date-end']).mjd
@@ -181,12 +188,15 @@ def readtxt(specfile):
 
     if 'young' in specfile.lower():
         data = np.loadtxt(specfile)
-        wmid, f, e = data.T
+        try:
+            wmid, f, e = data.T
+        except ValueError:
+            wmid, f = data.T
+            e = 0.0
         we = mids2edges(wmid)
         w0, w1 = we[:-1], we[1:]
         inst = rc.getinsti(specfile)
-        spectbl = utils.vecs2spectbl(w0, w1, f, e, instrument=inst,
-                                     filename=specfile)
+        spectbl = utils.vecs2spectbl(w0, w1, f, e, instrument=inst, filename=specfile)
         return [spectbl]
     else:
         raise Exception('A parser for {} files has not been implemented.'.format(specfile[2:9]))
@@ -282,13 +292,7 @@ def writefits(spectbl, name, overwrite=False):
         cols = [fits.Column('instruments','13A', array=rc.instruments),
                 fits.Column('bitvalues', 'I', array=rc.instvals)]
         hdr = fits.Header()
-        hdr['comment'] = ('This extension is a legend for the integer identifiers in the instrument column of the '
-                          'previous extension. Instruments are identified by bitwise flags so that any combination of '
-                          'instruments contributing to the data wihtin a spectral element can be identified together. '
-                          'For example, if instruments 4 and 16 (100 and 10000 in binary) both contribute to the data '
-                          'in a bin, then that bin will have the value 20, or 10100 in binary, to signify that both '
-                          'instruments 4 and 16 have contributed. This is identical to the handling of bitwise data '
-                          'quality flags.')
+        hdr['comment'] = legendcomment
         idhdu = fits.BinTableHDU.from_columns(cols, header=hdr, name='legend')
         ftbl.append(idhdu)
 
@@ -301,8 +305,7 @@ def writefits(spectbl, name, overwrite=False):
             hdr['comment'] = ('This extension contains a list of the source '
                               'files that were incorporated into this '
                               'spectrum.')
-            sfhdu = fits.BinTableHDU.from_columns(col, header=hdr,
-                                                  name='sourcespecs')
+            sfhdu = fits.BinTableHDU.from_columns(col, header=hdr, name='sourcespecs')
             ftbl.append(sfhdu)
 
         ftbl.flush()
@@ -356,7 +359,7 @@ def write_simple_ascii(spectbl, name, key='flux', overwrite=False):
     data = np.array([wmid, f]).T
     np.savetxt(name, data)
 
-def writeMAST(spectbl, name, overwrite=False):
+def writehlsp(star_or_spectbl, components=True, overwrite=False):
     """
     Writes spectbl to a standardized MUSCLES FITS file format that also
     includes all the keywords required for the archive.
@@ -375,7 +378,221 @@ def writeMAST(spectbl, name, overwrite=False):
     None
     """
 
-    writefits(spectbl, name, overwrite=overwrite)
+    if type(star_or_spectbl) is str:
+        star = star_or_spectbl
+        pfs = db.allpans(star)
+        pan = read(filter(lambda s: 'native_resolution' in s, pfs))[0]
+        writehlsp(pan, overwrite=overwrite)
+        dpan = read(filter(lambda s: 'dR=' in s, pfs))[0]
+        writehlsp(dpan, components=False, overwrite=overwrite)
+        return
+    else:
+        spectbl = star_or_spectbl
 
-    with fits.open(name) as hdus:
-        h0, h1, h2 = hdus
+    star = spectbl.meta['STAR']
+    srcspecs = spectbl.meta['SOURCESPECS']
+    name = spectbl.meta['NAME']
+    pan = 'panspec' in name
+
+    hlspname = db.hlsppath(name)
+
+    # add a wavelength midpoint column
+    w = (spectbl['w0'] + spectbl['w1']) / 2.0
+    spectbl['w'] = w
+    spectbl['w'].description = 'midpoint of the wavelength bin'
+    spectbl['w'].unit = 'Angstrom'
+
+    # CREATE PRIMARY EXTENSION
+    prihdr = fits.Header()
+    if pan:
+        prihdr['TELESCOP'] = 'MULTI'
+        prihdr['INSTRUME'] = 'MULTI'
+        prihdr['GRATING'] = 'MULTI'
+
+        insts = []
+        for specname in srcspecs:
+            tel = db.parse_observatory(specname)
+            spec = db.parse_spectrograph(specname)
+            grating = db.parse_info(specname, 3, 4)
+            insts.append([rc.HLSPtelescopes[tel], rc.HLSPinstruments[spec], rc.HLSPgratings[grating]])
+        insts = set(tuple(inst) for inst in insts)
+
+        for i,inst in enumerate(insts):
+            tkey, ikey, gkey = 'TELESC{:02d}'.format(i), 'INSTRU{:02d}'.format(i), 'GRATIN{:02d}'.format(i)
+            prihdr[tkey], prihdr[ikey], prihdr[gkey] = inst
+    else:
+        prihdr['TELESCOP'] = rc.HLSPtelescopes[db.parse_observatory(name)]
+        prihdr['INSTRUME'] = rc.HLSPinstruments[db.parse_spectrograph(name)]
+        prihdr['GRATING'] = rc.HLSPgratings[db.parse_info(name, 3, 4)]
+
+        if 'hst' in name:
+            # clooge. meh.
+            band = 'v' if '430' in name else 'u'
+            spectype = 'x1d' if band == 'u' else 'sx1'
+            if 'gj1214' in name and 'sts_g230l' in name: spectype = 'x2d'
+            f = db.findfiles(band, name, fullpaths=True)[0]
+            if 'custom' in name or 'coadd' in name:
+                srcspecs = fits.getdata(f, 'sourcespecs')
+                srcids = [db.parse_id(s) for s in srcspecs['sourcespecs']]
+                srcpaths = [db.findfiles(band, id, spectype, fullpaths=True)[0] for id in srcids]
+                apertures = [fits.getval(sf, 'APERTURE') for sf in srcpaths]
+                assert len(set(apertures)) == 1
+                prihdr['APERTURE'] = apertures[0]
+            else:
+                prihdr['APERTURE'] = fits.getval(f, 'APERTURE')
+
+    prihdr['TARGNAME'] = star
+    prihdr['RA_TARG'] = rc.starprops['RA'][star]
+    prihdr['DEC_TARG'] = rc.starprops['dec'][star]
+    prihdr['PROPOSID'] = 13650
+    prihdr['HLSPNAME'] = 'Measurements of the Ultraviolet Spectral Characteristics of Low-mass Exoplanet Host Stars'
+    prihdr['HLSPACRN'] = 'MUSCLES'
+    prihdr['HLSPLEAD'] = 'R. O. Parke Loyd'
+    prihdr['PR_INV_L'] = 'France'
+    prihdr['PR_INV_F'] = 'Kevin'
+
+    nonzero = spectbl['minobsdate'] > 0
+    if np.sum(nonzero) > 0:
+        mjd0 = np.min(spectbl['minobsdate'][nonzero])
+    else:
+        mjd0 = 0.0
+    date0 = Time(mjd0, format='mjd')
+    prihdr['DATE-OBS'] = date0.isot
+
+    mjd1 = np.max(spectbl['maxobsdate'])
+    date1 = Time(mjd1, format='mjd')
+    prihdr['EXPSTART'] = date0.mjd
+    prihdr['EXPEND'] = date1.mjd
+
+    if not pan:
+        expt = spectbl['exptime']
+        if not np.allclose(expt, expt[0]):
+            expmed = np.median(expt)
+            prihdr['EXPTIME'] = expmed
+            prihdr['EXPDEFN'] = 'MEDIAN'
+            prihdr['EXPMAX'] = np.max(expt)
+            prihdr['EXPMIN'] = np.min(expt[expt > 1])
+            prihdr['EXPMED'] = expmed
+        else:
+            prihdr['EXPTIME'] = expt[0]
+
+    prihdr['WAVEMIN'] = w[0]
+    prihdr['WAVEMAX'] = w[-1]
+    prihdr['WAVEUNIT'] = 'ang'
+    prihdr['AIRORVAC'] = 'vac'
+
+    if not pan or 'constant' in name:
+        mid = len(w) / 2
+        prihdr['SPECRES'] = w[mid]
+        prihdr['WAVERES'] = w[mid+1] - w[mid]
+
+    prihdr['FLUXMIN'] = np.min(spectbl['flux'])
+    prihdr['FLUXMAX'] = np.max(spectbl['flux'])
+    prihdr['FLUXUNIT'] = 'erg/s/cm2/ang'
+
+    prihdu = fits.PrimaryHDU(header=prihdr)
+
+    # CREATE SPECTRUM EXTENSION
+    spechdr = fits.Header()
+
+    cols = ['w', 'w0', 'w1', 'flux', 'error', 'exptime', 'flags', 'instrument', 'normfac', 'minobsdate', 'maxobsdate']
+
+    spechdr['EXTNAME'] = 'SPECTRUM'
+    spechdr['EXTNO'] = 2
+    descriptions = [spectbl[col].description for col in cols]
+    for i, desc in enumerate(descriptions):
+        spechdr['TDESC' + str(i+1)] = desc
+    if len(spectbl.meta['COMMENT']) > 1:
+        spechdr['COMMENT'] = spectbl.meta['COMMENT']
+
+    fitsnames = ['WAVELENGTH', 'WAVELENGTH0', 'WAVELENGTH1', 'FLUX', 'ERROR', 'EXPTIME', 'DQ', 'INSTRUMENT',
+             'NORMFAC', 'EXPSTART', 'EXPEND']
+    fmts = ['E']*6 + ['I', 'J'] + ['E'] + ['D']*2
+    datas = [spectbl[col].data for col in cols]
+    units = [spectbl[col].unit.to_string() for col in cols]
+    fitscols = [fits.Column(array=a, name=n, format=fmt, unit=u) for a, n, fmt, u in zip(datas, fitsnames, fmts, units)]
+    spechdu = fits.BinTableHDU.from_columns(fitscols, header=spechdr)
+    spechdu.name = 'SPECTRUM'
+    for fname, data in zip(fitsnames, datas):
+        spechdu.data[fname] = data
+
+    hdus = [prihdu, spechdu]
+
+    # INSTRUMENT LEGEND
+    if pan:
+        lgndhdr = fits.Header()
+        lgndhdr['comment'] = legendcomment
+        lgndhdr['extno'] = 3
+        lgndhdr['comment'] = ('Not all of these instruments were used to acquire data for this particular spectrum. '
+                              'Therefore, not all the listed HLSP files will exist in the database. Also note that '
+                              'polynomial fits for filling spectral gaps were not saved as separate spectra.')
+
+        vals = rc.instvals
+        instnames = rc.instruments
+        pieces = [s.split('_') for s in instnames]
+        tels, insts, gratings = zip(*pieces)
+        tels = [rc.HLSPtelescopes[t] for t in tels]
+        insts = [rc.HLSPinstruments[inst] for inst in insts]
+        gratings = [rc.HLSPgratings[g] for g in gratings]
+        dummynames = ['-_' + s + '_' + star for s in instnames]
+        hlspnames = [path.basename(db.hlsppath(n)) for n in dummynames]
+
+        names = ['BITVALUE', 'TELESCOPE', 'INSTRUMENT', 'GRATING', 'HLSP_FILE']
+        datas = [vals, tels, insts, gratings, hlspnames]
+        lens = [max(map(len, d)) for d in datas[1:]]
+        fmts = ['J'] + [str(n) + 'A' for n in lens]
+        fitscols = [fits.Column(n, fmt, array=a) for n, fmt, a in zip(names, fmts, datas)]
+
+        lgndhdu = fits.BinTableHDU.from_columns(fitscols, header=lgndhdr)
+        lgndhdu.name = 'INSTLGND'
+
+        hdus.append(lgndhdu)
+
+        if components:
+            specfiles, lyafile = db.panfiles(star)
+            if lyafile is not None: specfiles.append(lyafile)
+            for inst in instnames:
+                specfile = filter(lambda s: inst in s, specfiles)
+                if len(specfile) == 0:
+                    continue
+                assert len(specfile) == 1
+                spec = read(specfile[0])
+                assert len(spec) == 1
+                spec = spec[0]
+                writehlsp(spec, overwrite=overwrite)
+
+    # SOURCE SPECTRA LIST
+    if not pan and 'hst' in name:
+        srchdr = fits.Header()
+        srchdr['COMMENT'] = ('This extension contains a list of HST rootnames (9 character string in HST '
+                             'files '
+                             'downloaded from MAST) and dataset IDs of the exposures used to create this '
+                             'spectrum file. The dataset IDs can be used to directly locate the observations through '
+                             'the '
+                             'MAST HST data archive search interface. '
+                             'Multiple '
+                             'identifiers indicate the spectra were coadded. If "CUSTOM" keyword is set to true, '
+                             'this indicates that the component spectra were extracted from the 2D spectral image '
+                             '(x2d) files by the HLSP authors because standard STScI pipeline was unable to identify '
+                             'the location of the spectral trace in the 2D data.')
+        srchdr['EXTNO'] = 3
+        specnames = spectbl.meta['SOURCESPECS']
+        if len(specnames) == 0: specnames = [name]
+        rootnames = [s.split('_')[5] for s in specnames]
+        files = [db.findfiles(band, rn, spectype, fullpaths=True)[0] for rn in rootnames]
+        dataids = [fits.getval(f, 'ASN_ID') for f in files]
+        custom = ['custom' in s for s in specnames]
+        assert all(custom) or (not any(custom))
+        srchdr['CUSTOM'] = custom[0]
+
+        fitscols = [fits.Column(name='ROOTNAME', format='9A', array=rootnames),
+                    fits.Column(name='DATASET_ID', format='9A', array=dataids)]
+        srchdu = fits.BinTableHDU.from_columns(fitscols, header=srchdr)
+        srchdu.name = 'SRCSPECS'
+
+        hdus.append(srchdu)
+
+    hdus = fits.HDUList(hdus)
+    hdus.writeto(hlspname, clobber=overwrite)
+
+
