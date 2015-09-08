@@ -162,11 +162,9 @@ spectbl_format =  {'units' : ['Angstrom']*2 + ['erg/s/cm2/Angstrom']*2 + ['s',''
                                      'error on the flux',
                                      'cumulative exposure time for the bin',
                                      'data quality flags (specific to the instrument)',
-                                     'identifier for the instrument that is the source of the '
-                                     'data. use muscles.instruments[identifier] to determine '
-                                     'the instrument',
-                                     'noramlization factor applied to the '
-                                     'source spectrum',
+                                     'identifier for the instrument that is the source of the data. use '
+                                     'muscles.instruments[identifier] to determine the instrument',
+                                     'noramlization factor applied to the source spectrum',
                                      'modified julian date of start of first exposure',
                                      'modified julian date of end of last exposure'],
                    'colnames' : ['w0','w1','flux','error','exptime','flags',

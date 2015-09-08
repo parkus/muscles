@@ -241,7 +241,7 @@ def dpanpath(star, dR):
 def getinsti(filename):
     """Returns the numeric identifier for the instrument that created a
     spectrum based on the filename."""
-    return getinsti(parse_instrument(filename))
+    return rc.getinsti(parse_instrument(filename))
 
 
 def group_by_instrument(lst):

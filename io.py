@@ -117,7 +117,7 @@ def readfits(specfile):
     """Read a fits file into standardized table."""
 
     observatory = db.parse_observatory(specfile)
-    insti = rc.getinsti(specfile)
+    insti = db.getinsti(specfile)
 
     spec = fits.open(specfile)
     if any([s in specfile for s in ['coadd', 'custom', 'mod', 'panspec']]):
@@ -195,7 +195,7 @@ def readtxt(specfile):
             e = 0.0
         we = mids2edges(wmid)
         w0, w1 = we[:-1], we[1:]
-        inst = rc.getinsti(specfile)
+        inst = db.getinsti(specfile)
         spectbl = utils.vecs2spectbl(w0, w1, f, e, instrument=inst, filename=specfile)
         return [spectbl]
     else:
@@ -235,7 +235,7 @@ def readsav(specfile):
     N = len(flux)
     err = np.zeros(N)
     expt,flags = np.zeros(N), np.zeros(N, 'i1')
-    source = rc.getinsti(specfile)*np.ones(N)
+    source = db.getinsti(specfile)*np.ones(N)
     normfac = np.ones(N)
     start, end = [np.zeros(N)]*2
     data = [w0,w1,flux,err,expt,flags,source,normfac,start,end]

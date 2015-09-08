@@ -148,7 +148,7 @@ def conform_spectbl(spectbl):
         cols.append(Column(spectbl[n], n, dt, unit=u, description=de, format=f))
     return Table(cols, meta=meta)
 
-def vecs2spectbl(w0, w1, flux, err=0.0, exptime=0.0, flags=0, instrument=99,
+def vecs2spectbl(w0, w1, flux, err=0.0, exptime=0.0, flags=0, instrument=-99,
                  normfac=1.0, start=0.0, end=0.0, star='', filename='',
                  name='', sourcespecs=[], comments=[]):
     """

@@ -39,19 +39,19 @@ def theworks(star, R=10000.0, dw=1.0, silent=False):
 
     # interpolate and save phoenix spectrum
     if not silent: print '\n\ninterpolating phoenix spectrum'
-    auto_phxspec(star)
+    auto_phxspec(star, silent=silent)
 
     # make custom extractions
     if not silent: print '\n\nperforming any custom extractions'
-    auto_customspec(star)
+    auto_customspec(star, silent=silent)
 
     # coadd spectra
     if not silent: print '\n\ncoadding spectra'
-    auto_coadd(star)
+    auto_coadd(star, silent=silent)
 
     # make panspectrum
     if not silent: print '\n\nstitching spectra together'
-    panspectrum(star, R=R, dw=dw)  # panspec and Rspec
+    panspectrum(star, R=R, dw=dw, plotnorms=(not silent), silent=silent)  # panspec and Rspec
 
 
 def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=True,
@@ -839,7 +839,7 @@ def auto_customspec(star, silent=False):
                 datalist = [spec[s] for s in ['w0', 'w1', 'flux', 'error']]
                 hdr = fits.getheader(x2dfile, extname='sci')
                 expt, start, end = [hdr[s] for s in ['exptime', 'expstart', 'expend']]
-                inst = rc.getinsti(specfile)
+                inst = db.getinsti(specfile)
                 norm = 1.0
                 datalist.extend([expt, spec['dq'], inst, norm, start, end])
 
