@@ -273,6 +273,32 @@ def HSTimgregions(specfile, scale=0.3):
     args = ribdims + [x]
     __plotribbons(*args)
 
+
+def lyavsdata(star):
+    data, = io.read(db.lyafile(star))
+    mod, = io.read(db.findfiles('u', 'lya', star, fullpaths=True)[0])
+    specstep(data)
+    specstep(mod)
+    plt.xlim(1208,1222)
+
+
+def compareEUV(star):
+    euvfile = db.findfiles('u', 'euv', star, fullpaths=True)[0]
+    w,f,_ = np.loadtxt(euvfile).T
+    I0 = np.trapz(f, w)
+    print 'Trapz from Allison\'s file: %g' % I0
+    spec = io.read(euvfile)[0]
+    I1 = np.sum((spec['w1'] - spec['w0']) * spec['flux'])
+    print 'Direct integration from spectbl version of Allison\'s file: %g' % I1
+    I2 = np.trapz(spec['flux'], (spec['w0'] + spec['w1'])/2.0)
+    print 'Trapz from spectbl version of Allison\'s file: %g' % I2
+    p = io.read(db.panpath(star))[0]
+    keep = p['instrument'] == rc.getinsti('mod_euv_young')
+    p = p[keep]
+    I3 = np.sum((spec['w1'] - spec['w0']) * spec['flux'])
+    print 'Direct integration from panspec EUV portion: %g' % I3
+
+
 def __ribbons(specfile, seg=''):
     if 'sts' in specfile:
         sd = fits.getdata(specfile, 1)
