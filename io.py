@@ -31,7 +31,7 @@ def readphotons(star, inst):
 
 
 def readFlareTbl(star, inst, label):
-    tblfile = db.findfiles(db.flaredir, star, inst, label, 'flares', fullpaths=True)
+    tblfile = db.findfiles(rc.flaredir, star, inst, label, 'flares', fullpaths=True)
     assert len(tblfile) == 1
     tbl = Table.read(tblfile[0])
 
@@ -188,11 +188,13 @@ def readtxt(specfile):
 
     if 'young' in specfile.lower():
         data = np.loadtxt(specfile)
-        try:
-            wmid, f, e = data.T
-        except ValueError:
+        if data.shape[1] == 3:
+            wmid, f, _ = data.T
+        elif data.shape[1] == 2:
             wmid, f = data.T
-            e = 0.0
+        else:
+            raise ValueError('crap.')
+        e = 0.0
         we = mids2edges(wmid)
         w0, w1 = we[:-1], we[1:]
         inst = db.getinsti(specfile)
@@ -393,6 +395,7 @@ def writehlsp(star_or_spectbl, components=True, overwrite=False):
     srcspecs = spectbl.meta['SOURCESPECS']
     name = spectbl.meta['NAME']
     pan = 'panspec' in name
+    mod = 'mod' in name
 
     hlspname = db.hlsppath(name)
 
@@ -451,20 +454,14 @@ def writehlsp(star_or_spectbl, components=True, overwrite=False):
     prihdr['PR_INV_L'] = 'France'
     prihdr['PR_INV_F'] = 'Kevin'
 
-    nonzero = spectbl['minobsdate'] > 0
-    if np.sum(nonzero) > 0:
-        mjd0 = np.min(spectbl['minobsdate'][nonzero])
-    else:
-        mjd0 = 0.0
-    date0 = Time(mjd0, format='mjd')
-    prihdr['DATE-OBS'] = date0.isot
-
-    mjd1 = np.max(spectbl['maxobsdate'])
-    date1 = Time(mjd1, format='mjd')
-    prihdr['EXPSTART'] = date0.mjd
-    prihdr['EXPEND'] = date1.mjd
-
-    if not pan:
+    if not (pan or mod):
+        mjd0 = np.min(spectbl['minobsdate'])
+        mjd1 = np.max(spectbl['maxobsdate'])
+        date0 = Time(mjd0, format='mjd')
+        date1 = Time(mjd1, format='mjd')
+        prihdr['DATE-OBS'] = date0.isot
+        prihdr['EXPSTART'] = date0.mjd
+        prihdr['EXPEND'] = date1.mjd
         expt = spectbl['exptime']
         if not np.allclose(expt, expt[0]):
             expmed = np.median(expt)

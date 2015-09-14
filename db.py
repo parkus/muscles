@@ -314,7 +314,7 @@ def hlsppath(name):
         tel = rc.HLSPtelescopes[tel].lower()
         inst = rc.HLSPinstruments[inst].lower()
         filt = rc.HLSPgratings[filt].lower()
-        product = 'component-spectrum'
+        product = 'component-spec'
 
     name = ('hlsp_muscles_{tel}_{inst}_{star}_{filter}_{version}_{product}.fits'
             ''.format(tel=tel, inst=inst, star=star, filter=filt, version=rc.version, product=product))

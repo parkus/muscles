@@ -15,7 +15,7 @@ from astropy.io import fits
 from pandas import read_json
 import scicatalog.scicatalog as sc
 
-version = '0.0'
+version = '00'
 
 # new mac
 gdrive = '/Users/rolo7566/Google Drive'
@@ -175,7 +175,7 @@ stdbands = read_json(stdbandpath)
 prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m', 'sts_g430l',
              'sts_g430m']
 
-lyacut = [1208.0, 1222.0]
+lyacut = [1209.5, 1222.0]
 
 flare_bands = {#'hst_cos_g130m' : [[1169.5 , 1198.5 ], [1201.7 , 1212.17], [1219.17, 1271.19], [1324.83, 1426.08]],
                #'hst_cos_g130m' : [[1324.83, 1426.08]],
@@ -193,7 +193,7 @@ instvals = [2**i for i in range(len(instruments))]
 
 # for use in making FITS headers
 HLSPtelescopes = {'hst':'HST', 'cxo':'CXO', 'xmm':'XMM', 'mod':'MOD'}
-HLSPinstruments = {'cos':'COS', 'sts':'STIS', 'euv':'EUV-ESTIMATE', 'lya':'LYA-RECONSTRUCTION', 'phx':'PHX',
+HLSPinstruments = {'cos':'COS', 'sts':'STIS', 'euv':'EUV-EST', 'lya':'LYA-RECON', 'phx':'PHX',
                    'mos':'MOS', 'pn-':'PN', 'gap':'POLYNOMIAL-FIT'}
 HLSPgratings = {'g130m':'G130M', 'g160m':'G160M', 'g430l':'G430L', 'g430m':'G430M', 'g140m':'G140M', 'e230m':'E230M',
                 'e230h':'E230H', 'g230l':'G230L', 'e140m':'E140M', 'fill-':'NA', '-----':'NA', 'young':'NA'}

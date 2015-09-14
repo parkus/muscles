@@ -440,7 +440,8 @@ def showFlareStats(star, inst, label, trange, dt=30.0, ax=None):
 
 
 def multiBandCurves(star='gj832', inst='cos_g130m', trange=[24400, 24900], n=100, tref=24625.0,
-                    bandnames=['NV', 'SiIV', 'SiIII', 'CII', 'cont1380'], ax=None, norms=None, fluxed=False):
+                    bandnames=['NV', 'SiIV', 'SiIII', 'CII', 'cont1380'], ax=None, norms=None, fluxed=False,
+                    maxpts=500):
     if ax is None: ax = plt.gca()
     ph, p = io.readphotons(star, inst)
     p['time'] -= tref
@@ -471,16 +472,22 @@ def multiBandCurves(star='gj832', inst='cos_g130m', trange=[24400, 24900], n=100
         t = (t0 + t1) / 2.0
         keep = (t1 > trange[0]) & (t0 < trange[1])
         t, rate, err = t[keep], rate[keep], err[keep]
+
+        if len(t) > maxpts:
+            keep = un.downsample_even(t, maxpts)
+            t, rate, err = t[keep], rate[keep], err[keep]
+
         if norms is not None:
             rate /= norms[i]
-        line, poly = pu.errorpoly(t, rate, err, ealpha=0.2)
+
+        line, poly = pu.errorpoly(t, rate, err, ealpha=0.2, ax=ax)
         lines.append(line)
         labels.append(label)
 
     ax.legend(lines, labels, loc='best', fontsize='small')
 
 
-def specSnapshot(star, inst, trange, wrange, n=100, ax=None, vCen=None, **kwargs):
+def specSnapshot(star, inst, trange, wrange, n=100, ax=None, vCen=None, maxpts=500, **kwargs):
     if ax is None: ax = plt.gca()
     ph, p = io.readphotons(star, inst)
     keep = mnp.inranges(p['time'], trange)
@@ -497,6 +504,10 @@ def specSnapshot(star, inst, trange, wrange, n=100, ax=None, vCen=None, **kwargs
     keep, = np.nonzero(mnp.inranges(w, wrange))
     keep = np.insert(keep, [0, len(keep)], [keep[0]-1, keep[-1]+1])
     w, spec, err = w[keep], spec[keep], err[keep]
+
+    if len(w) > maxpts:
+        keep = un.downsample_even(w, maxpts)
+        w, spec, err = w[keep], spec[keep], err[keep]
 
     velocify = lambda w: (w - vCen) / vCen * 3e5
     if vCen is not None:
