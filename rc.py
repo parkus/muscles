@@ -187,16 +187,16 @@ specstrings = ['x1d', 'mod_euv', 'mod_lya', 'spec', 'sx1', 'mod_phx', 'coadd']
 instruments = ['hst_cos_g130m','hst_cos_g160m','hst_sts_g430l','hst_sts_g430m',
                'hst_sts_g140m','hst_sts_e230m','hst_sts_e230h','hst_sts_g230l',
                'hst_cos_g230l','hst_sts_e140m','mod_gap_fill-','mod_euv_-----',
-               'xmm_mos_-----','xmm_pn-_-----','mod_phx_-----','mod_lya_young',
-               'mod_euv_young']
+               'xmm_epc_multi','xmm_epc_pn---','mod_phx_-----','mod_lya_young','mod_euv_young']
 instvals = [2**i for i in range(len(instruments))]
 
 # for use in making FITS headers
 HLSPtelescopes = {'hst':'HST', 'cxo':'CXO', 'xmm':'XMM', 'mod':'MOD'}
 HLSPinstruments = {'cos':'COS', 'sts':'STIS', 'euv':'EUV-EST', 'lya':'LYA-RECON', 'phx':'PHX',
-                   'mos':'MOS', 'pn-':'PN', 'gap':'POLYNOMIAL-FIT'}
+                   'epc':'EPIC', 'gap':'POLYNOMIAL-FIT'}
 HLSPgratings = {'g130m':'G130M', 'g160m':'G160M', 'g430l':'G430L', 'g430m':'G430M', 'g140m':'G140M', 'e230m':'E230M',
-                'e230h':'E230H', 'g230l':'G230L', 'e140m':'E140M', 'fill-':'NA', '-----':'NA', 'young':'NA'}
+                'e230h':'E230H', 'g230l':'G230L', 'e140m':'E140M', 'fill-':'NA', '-----':'NA', 'young':'NA',
+                'pn---':'PN', 'multi':'MULTI'}
 
 
 def getinststr(inst_val):
