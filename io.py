@@ -156,19 +156,21 @@ def readfits(specfile):
         w0 = np.insert(we, 0, wmid[0] - dw)
         w1 = np.append(we, wmid[-1] + dw)
 
-        optel = db.parse_spectrograph(specfile)
-        if optel == 'pn-':
+        optel = db.parse_grating(specfile)
+        if optel == 'pn---':
             expt = sh['spec_exptime_pn'] * 1000.0
             start = Time(sh['pn_date-obs']).mjd
             end = Time(sh['pn_date-end']).mjd
-        if optel == 'mos':
-            expt = (sh['spec_exptime_mos1'] + sh['spec_exptime_mos2']) / 2.0 * 1000.0
+        if optel == 'multi':
+            expt = (sh['spec_exptime_mos1'] + sh['spec_exptime_mos2'] + sh['spec_exptime_pn']) / 3.0 * 1000.0
             start1 = Time(sh['mos1_date-obs']).mjd
             start2 = Time(sh['mos2_date-obs']).mjd
+            start3 = Time(sh['pn_date-obs']).mjd
             end1 = Time(sh['mos1_date-end']).mjd
             end2 = Time(sh['mos2_date-end']).mjd
-            start = min([start1, start2])
-            end = max([end1, end2])
+            end3 = Time(sh['pn_date-end']).mjd
+            start = min([start1, start2, start3])
+            end = max([end1, end2, end3])
 
         star = db.parse_star(specfile)
         spectbls = [utils.vecs2spectbl(w0, w1, flux, err, expt,
@@ -426,7 +428,8 @@ def writehlsp(star_or_spectbl, components=True, overwrite=False):
     else:
         prihdr['TELESCOP'] = rc.HLSPtelescopes[db.parse_observatory(name)]
         prihdr['INSTRUME'] = rc.HLSPinstruments[db.parse_spectrograph(name)]
-        prihdr['GRATING'] = rc.HLSPgratings[db.parse_info(name, 3, 4)]
+        prihdr['GRATING'] = rc.HLSPgratings[db.parse_grating(name)]
+
 
         if 'hst' in name:
             # clooge. meh.
@@ -443,6 +446,21 @@ def writehlsp(star_or_spectbl, components=True, overwrite=False):
                 prihdr['APERTURE'] = apertures[0]
             else:
                 prihdr['APERTURE'] = fits.getval(f, 'APERTURE')
+        if 'xmm' in name:
+            hdr = fits.getheader(db.name2path(name))
+            prihdr['GRATING'] = 'NA'
+            if 'multi' in name:
+                prihdr['DETECTOR'] = 'MULTI'
+                prihdr['DETECT00'] = 'PN'
+                prihdr['DETECT01'] = 'MOS1'
+                prihdr['DETECT02'] = 'MOS2'
+                prihdr['FILTER'] = 'MULTI'
+                prihdr['FILTER00'] = hdr['pn_filter']
+                prihdr['FILTER01'] = hdr['mos1_filter']
+                prihdr['FILTER02'] = hdr['mos2_filter']
+            else:
+                prihdr['DETECTOR'] = 'PN'
+                prihdr['FILTER'] = hdr['pn_filter']
 
     prihdr['TARGNAME'] = star
     prihdr['RA_TARG'] = rc.starprops['RA'][star]
@@ -463,6 +481,9 @@ def writehlsp(star_or_spectbl, components=True, overwrite=False):
         prihdr['EXPSTART'] = date0.mjd
         prihdr['EXPEND'] = date1.mjd
         expt = spectbl['exptime']
+        if 'xmm' in name:
+            prihdr['EXPTIME'] = expt[0]
+            prihdr['EXPDEFN'] = 'MEAN'
         if not np.allclose(expt, expt[0]):
             expmed = np.median(expt)
             prihdr['EXPTIME'] = expmed
@@ -496,7 +517,17 @@ def writehlsp(star_or_spectbl, components=True, overwrite=False):
 
     spechdr['EXTNAME'] = 'SPECTRUM'
     spechdr['EXTNO'] = 2
-    descriptions = [spectbl[col].description for col in cols]
+    descriptions = ['midpoint of the wavelength bin',
+                    'left/blue edge of the wavelength bin'
+                    'right/red edge of the wavelength bin'
+                    'average flux over the bin'
+                    'error on the flux'
+                    'cumulative exposure time for the bin'
+                    'data quality flags (HST data only)'
+                    'bitmask identifying the source instrument(s). See "instlgnd" extension for a legend.'
+                    'normalization factor applied to the source spectrum'
+                    'modified julian date of start of first exposure'
+                    'modified julian date of end of last exposure' ]
     for i, desc in enumerate(descriptions):
         spechdr['TDESC' + str(i+1)] = desc
     if len(spectbl.meta['COMMENT']) > 1:
@@ -559,7 +590,7 @@ def writehlsp(star_or_spectbl, components=True, overwrite=False):
                 writehlsp(spec, overwrite=overwrite)
 
     # SOURCE SPECTRA LIST
-    if not pan and 'hst' in name:
+    if 'hst' in name:
         srchdr = fits.Header()
         srchdr['COMMENT'] = ('This extension contains a list of HST rootnames (9 character string in HST '
                              'files '
@@ -587,6 +618,20 @@ def writehlsp(star_or_spectbl, components=True, overwrite=False):
         srchdu = fits.BinTableHDU.from_columns(fitscols, header=srchdr)
         srchdu.name = 'SRCSPECS'
 
+        hdus.append(srchdu)
+    if 'xmm' in name:
+        srchdr = fits.Header()
+        srchdr['COMMENT'] = ('This extension contains a list of observation IDs (DATASET_ID used for consistency '
+                             'with HST data) that can be used to '
+                             'locate the '
+                             'data in the XMM archives. XMM data all come from only a single observation (unlike the '
+                             'HST observations), but this extension is retained in place of a keyword for consistency '
+                             'with the HST files.')
+        srchdr['EXTNO'] = 3
+        obsid = hdr['OBS_ID']
+        col = fits.Column(name='DATASET_ID', format='10A', array=[obsid])
+        srchdu = fits.BinTableHDU.from_columns([col], header=srchdr)
+        srchdu.name = 'SRCSPECS'
         hdus.append(srchdu)
 
     hdus = fits.HDUList(hdus)
