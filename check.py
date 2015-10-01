@@ -16,7 +16,8 @@ import numpy as np
 from os import path
 from spectralPhoton import image
 from math import ceil, floor
-from mypy.my_numpy import lace
+import mypy.my_numpy as mnp
+from mypy.specutils import plot as specplot
 
 stsfac = 2
 
@@ -299,6 +300,38 @@ def compareEUV(star):
     print 'Direct integration from panspec EUV portion: %g' % I3
 
 
+def stackpans(range=[1310,1350], keeprange=[1100,2000], xlim=None, norm=True, offfac=1.0):
+    if xlim is None: xlim = keeprange
+    pans = []
+    for star in rc.observed:
+        p = io.read(db.panpath(star))[0]
+        pans.append(utils.keepranges(p, *keeprange))
+    stackspecs(pans, range, norm=norm, offfac=offfac, xlim=xlim)
+
+
+def stackspecs(specs, range, norm=True, offfac=1.0, xlim=None):
+    ax = plt.gca()
+    if xlim is not None: plt.xlim(xlim)
+    off = 0.0
+    for spec in specs:
+        w = utils.wbins(spec)
+        wmid = (w[:,0] + w[:,1]) / 2.0
+        f = spec['flux']
+        fac = np.max(f[mnp.inranges(wmid, range)])
+        if norm:
+            f /= fac
+        f += off
+        l = specplot(w, f)
+        xlim = ax.get_xlim()
+        mid = (xlim[0] + xlim[1]) / 2.0
+        plt.text(mid, off, spec.meta['STAR'], bbox=dict(fc='w', alpha=0.5, lw=0))
+        if norm:
+            off += offfac
+        else:
+            off += fac*offfac
+    plt.ylim(0.0, off)
+
+
 def __ribbons(specfile, seg=''):
     if 'sts' in specfile:
         sd = fits.getdata(specfile, 1)
@@ -335,9 +368,9 @@ def __plotribbon(mid, hgt, color, x):
 
     #lace if mid and hgt aren't scalar
     if not np.isscalar(mid):
-        x = lace(x, x[1:-1])
-        lo = lace(lo, lo[:, 1:-1], 1)
-        hi = lace(hi, hi[:, 1:-1], 1)
+        x = mnp.lace(x, x[1:-1])
+        lo = mnp.lace(lo, lo[:, 1:-1], 1)
+        hi = mnp.lace(hi, hi[:, 1:-1], 1)
     else:
         lo, hi = [lo], [hi]
 
