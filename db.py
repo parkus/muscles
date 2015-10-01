@@ -185,6 +185,10 @@ def parse_spectrograph(filename):
     return parse_info(filename, 2, 3)
 
 
+def parse_grating(filename):
+    return parse_info(filename, 3, 4)
+
+
 def parse_band(filename):
     return parse_info(filename, 0, 1)
 
@@ -208,6 +212,10 @@ def parse_paninfo(filename):
 def parse_name(filename):
     name = os.path.basename(filename)
     return '.'.join(name.split('.')[:-1])
+
+
+def name2path(name):
+    return os.path.join(rc.datapath, rc.bandmap[name[0]], name+'.fits')
 
 
 def allpans(star):
@@ -300,15 +308,11 @@ def hlsppath(name):
     if 'panspec' in name:
         tel = 'multi'
         inst = 'multi'
-        filt = 'multi'
-        product = 'sed'
+        filt = 'broadband'
         if 'native' in name:
-            inst += '-variable-resolution'
+            product = 'var-res-sed'
         elif 'constant_dR' in name:
-            i0 = name.find('dR=') + 3
-            i1 = name.find(' ang')
-            res = name[i0:i1]
-            inst += '-const-resolution-{}-ang'.format(res)
+            product = 'const-res-sed'
     else:
         tel, inst, filt = parse_instrument(name).split('_')
         tel = rc.HLSPtelescopes[tel].lower()
@@ -316,7 +320,7 @@ def hlsppath(name):
         filt = rc.HLSPgratings[filt].lower()
         product = 'component-spec'
 
-    name = ('hlsp_muscles_{tel}_{inst}_{star}_{filter}_{version}_{product}.fits'
+    name = ('hlsp_muscles_{tel}_{inst}_{star}_{filter}_v{version}_{product}.fits'
             ''.format(tel=tel, inst=inst, star=star, filter=filt, version=rc.version, product=product))
     return os.path.join(rc.hlsppath, name)
 
