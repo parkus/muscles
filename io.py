@@ -56,6 +56,29 @@ def readpans(star):
     panfiles = db.allpans(star)
     return sum(map(read, panfiles), [])
 
+def read_panspec_sources(star):
+    sets = rc.loadsettings(star)
+    files, lyafile = db.panfiles(star)
+
+    specs = read(files)
+
+    # if there is a custom normalization order, reorder the spectra accordingly
+    def insti(spec):
+        inst = spec['instrument']
+        assert np.all(inst == inst[0])
+        inst = inst[0]
+    if len(sets.norm_order) > 0:
+        key = lambda spec: sets.norm_order.index(rc.getinststr(insti(spec)))
+    # else be sure that the spectra are in the default order (the xmm spectra confuse this bc an obs and model are
+    # read in)
+    else:
+        key = insti
+    specs = sorted(specs, key=key)
+
+    lyaspec = None if lyafile is None else read(lyafile)[0]
+
+    return specs, lyaspec
+
 def read(specfiles):
     """A catch-all function to read in FITS spectra from all variety of
     instruments and provide standardized output as a list of astropy tables.
@@ -117,7 +140,6 @@ def readfits(specfile):
     """Read a fits file into standardized table."""
 
     observatory = db.parse_observatory(specfile)
-    insti = db.getinsti(specfile)
 
     spec = fits.open(specfile)
     if any([s in specfile for s in ['coadd', 'custom', 'mod', 'panspec']]):
@@ -126,6 +148,7 @@ def readfits(specfile):
         sd, sh = spec[1].data, spec[1].header
         flux, err = sd['flux'], sd['error']
         shape = flux.shape
+        insti = db.getinsti(specfile)
         iarr = np.ones(shape)*insti
         wmid, flags = sd['wavelength'], sd['dq']
         wedges = np.array([mids2edges(wm, 'left', 'linear-x') for wm in wmid])
@@ -142,20 +165,19 @@ def readfits(specfile):
 
     elif observatory == 'xmm':
         sh = spec[0].header
-        dw = 5.0
-        colnames = ['Wave', 'CFlux', 'CFlux_err']
-        wmid, flux, err = [spec[1].data[s] for s in colnames]
-        #TODO: make sure to look this over regularly, as these files are likely
-        #to grow and change
-        wepos, weneg = (wmid[:-1] + dw / 2.0), (wmid[1:] - dw / 2.0)
-        if any(abs(wepos - weneg) > 0.01):
-            raise ValueError('There are significant gaps in the XMM spectrum'
-                             '\n{}'.format(path.basename(specfile)))
-        # to ensure gaps aren't introduced due to slight errors...
-        we = (wepos + weneg) / 2.0
-        w0 = np.insert(we, 0, wmid[0] - dw)
-        w1 = np.append(we, wmid[-1] + dw)
+        star = db.parse_star(specfile)
 
+        def groomwave(ext):
+            wmid = spec[ext].data['Wave']
+            halfwidth = spec[ext].data['bin_width']
+            w0, w1 = wmid - halfwidth, wmid + halfwidth
+            assert np.allclose(w0[1:], w1[:-1])
+            # there may still be slight mismatches, so fix it up
+            betweens = (w0[1:] + w1[:-1]) / 2.0
+            w0[1:], w1[:-1] = betweens, betweens
+            return w0, w1
+
+        # first the observed spectrum
         optel = db.parse_grating(specfile)
         if optel == 'pn---':
             expt = sh['spec_exptime_pn'] * 1000.0
@@ -171,11 +193,22 @@ def readfits(specfile):
             end3 = Time(sh['pn_date-end']).mjd
             start = min([start1, start2, start3])
             end = max([end1, end2, end3])
+        flux, err = [spec[1].data[s] for s in ['CFlux', 'CFlux_err']]
+        w0, w1 = groomwave(1)
+        insti = db.getinsti(specfile)
+        obsspec = utils.vecs2spectbl(w0, w1, flux, err, expt, instrument=insti, start=start, end=end, star=star,
+                                     filename=specfile)
 
-        star = db.parse_star(specfile)
-        spectbls = [utils.vecs2spectbl(w0, w1, flux, err, expt,
-                                       instrument=insti, start=start, end=end,
-                                       star=star, filename=specfile)]
+        flux = spec[2].data['Flux']
+        expt, err = 0.0, 0.0
+        w0, w1 = groomwave(2)
+        name_pieces = obsspec.meta['NAME'].split('_')
+        configuration = 'mod_apc_-----'
+        name = '_'.join(name_pieces[:1] + [configuration] + name_pieces[4:])
+        insti = rc.getinsti(configuration)
+        modspec = utils.vecs2spectbl(w0, w1, flux, err, expt, instrument=insti, name=name, filename=specfile)
+
+        spectbls = [obsspec, modspec]
     else:
         raise Exception('fits2tbl cannot parse data from the {} observatory.'.format(observatory))
 
@@ -199,6 +232,16 @@ def readtxt(specfile):
         e = 0.0
         we = mids2edges(wmid)
         w0, w1 = we[:-1], we[1:]
+
+        # deal with overbinning
+        f_uniq = np.unique(f)
+        w0_, w1_ = [], []
+        for ff in f:
+            keep = (ff == f_uniq)
+            w0_.append(np.min(w0[keep]))
+            w1_.append(np.max(w1[keep]))
+        w0, w1 = map(np.array, [w0_, w1_])
+
         inst = db.getinsti(specfile)
         spectbl = utils.vecs2spectbl(w0, w1, f, e, instrument=inst, filename=specfile)
         return [spectbl]
@@ -577,14 +620,12 @@ def writehlsp(star_or_spectbl, components=True, overwrite=False):
         hdus.append(lgndhdu)
 
         if components:
-            specfiles, lyafile = db.panfiles(star)
-            if lyafile is not None: specfiles.append(lyafile)
+            specs, lyaspec = read_panspec_sources(star)
+            if lyaspec is not None: specs.append(lyaspec)
             for inst in instnames:
-                specfile = filter(lambda s: inst in s, specfiles)
-                if len(specfile) == 0:
+                spec = filter(lambda s: inst in s.meta['NAME'], specs)
+                if len(spec) == 0:
                     continue
-                assert len(specfile) == 1
-                spec = read(specfile[0])
                 assert len(spec) == 1
                 spec = spec[0]
                 writehlsp(spec, overwrite=overwrite)

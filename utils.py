@@ -165,7 +165,6 @@ def vecs2spectbl(w0, w1, flux, err=0.0, exptime=0.0, flags=0, instrument=-99,
     -------
     spectbl : MUSCLES spectrum (astropy) table
     """
-    #TODO: add new 'name' meta
     datalist = [w0, w1, flux, err, exptime, flags, instrument, normfac, start,
                 end]
     return list2spectbl(datalist, star, filename, name, sourcespecs, comments)

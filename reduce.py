@@ -64,15 +64,9 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=True,
     listed in order of descending quality.
     """
     sets = rc.loadsettings(star)
-    files, lyafile = db.panfiles(star)
 
-    # if there is a custom normalization order, reorder the files accordingly
-    if len(sets.norm_order) > 0:
-        for inst in sets.norm_order[::-1]:
-            ifiles = filter(lambda s: inst in s, files)
-            for f in ifiles: files.remove(f)
-            for f in ifiles[::-1]: files.insert(0, f)
-    specs = io.read(files)
+    specs, lyaspec = io.read_panspec_sources(star)
+
     names = [s.meta['NAME'] for s in specs]
 
     # make sure all spectra are of the same star
@@ -175,7 +169,7 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=True,
     spec.meta['NAME'] = db.parse_name(db.panpath(star))
 
     # replace lya portion with model or normalized stis data
-    if lyafile is None:
+    if lyaspec is None:
         name = filter(lambda s: 'sts_g140m' in s or 'sts_e140m' in s, names)
         if len(name) > 1:
             raise Exception('More than one Lya stis file found.')
@@ -185,12 +179,11 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=True,
         if not silent:
             print ('replacing section {:.1f}-{:.1f} with STIS data from {lf}, '
                    'normalized by {normfac}'
-                   ''.format(*rc.lyacut, lf=lyafile, normfac=normfac))
+                   ''.format(*rc.lyacut, lf=name, normfac=normfac))
     else:
         if not silent:
             print ('replacing section {:.1f}-{:.1f} with data from {lf}'
-                   ''.format(*rc.lyacut, lf=lyafile))
-        lyaspec = io.read(lyafile)[0]
+                   ''.format(*rc.lyacut, lf=lyaspec.meta['NAME']))
     lyaspec = utils.keepranges(lyaspec, rc.lyacut)
     spec = splice(spec, lyaspec)
 
@@ -442,7 +435,8 @@ def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
     if ismodel0 and not ismodel1:
         return splice(spec0, spec1)
     if ismodel0 and ismodel1:
-        return NotImplementedError('Not sure how to splice two models together.')
+        if not silent: print 'Both spectra are purely models in the overlap. Keeping the first of the two.'
+        return splice(spec1, spec0)
 
     # otherwise, find the best splice locations
     # get all edges within the overlap
