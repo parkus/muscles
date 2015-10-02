@@ -236,11 +236,13 @@ def readtxt(specfile):
         # deal with overbinning
         f_uniq = np.unique(f)
         w0_, w1_ = [], []
-        for ff in f:
-            keep = (ff == f_uniq)
+        for ff in f_uniq:
+            keep = (ff == f)
             w0_.append(np.min(w0[keep]))
             w1_.append(np.max(w1[keep]))
         w0, w1 = map(np.array, [w0_, w1_])
+        isort = np.argsort(w0)
+        w0, w1, f = w0[isort], w1[isort], f_uniq[isort]
 
         inst = db.getinsti(specfile)
         spectbl = utils.vecs2spectbl(w0, w1, f, e, instrument=inst, filename=specfile)
