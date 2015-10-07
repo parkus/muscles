@@ -17,6 +17,23 @@ keys = ['units', 'dtypes', 'fmts', 'descriptions', 'colnames']
 spectbl_format = [rc.spectbl_format[key] for key in keys]
 units, dtypes, fmts, descriptions, colnames = spectbl_format
 
+
+def fancyBin(spec, maxpow=30000):
+    """Rebin a spectrum to a coarser resolving power, but only where this actually makes it coarser."""
+    pieces = []
+    while len(spec) > 0:
+        i = spec['instrument'][0]
+        argpiece = (spec['instrument'] == i)
+        piece = spec[argpiece]
+        spec = spec[~argpiece]
+        w = (spec['w0'] + spec['w1']) / 2.0
+        dw = (spec['w1'] - spec['w0'])
+        Rs = w / dw
+        if Rs.min() > maxpow:
+            piece = reduce.reb
+
+
+
 def mag(spectbl, band='J'):
     w = (spectbl['w0'] + spectbl['w1']) / 2.0
     f = spectbl['flux']
@@ -33,6 +50,7 @@ def mag(spectbl, band='J'):
 
     mag = -2.5*np.log10(filterflux) + zeropoint
     return mag
+
 
 def flux_integral(spectbl, wa=None, wb=None, normed=False):
     """Compute integral of flux from spectbl values. Result will be in erg/s/cm2."""
@@ -51,6 +69,7 @@ def flux_integral(spectbl, wa=None, wb=None, normed=False):
         return np.sum(spectbl['normflux'] * dw)
     else:
         return np.sum(spectbl['flux'] * dw), mnp.quadsum(spectbl['error'] * dw)
+
 
 def bol2sol(a):
     """Convert bolometric-normalized fluxes to Earth-equivalent fluxes."""
@@ -148,6 +167,7 @@ def conform_spectbl(spectbl):
         cols.append(Column(spectbl[n], n, dt, unit=u, description=de, format=f))
     return Table(cols, meta=meta)
 
+
 def vecs2spectbl(w0, w1, flux, err=0.0, exptime=0.0, flags=0, instrument=-99,
                  normfac=1.0, start=0.0, end=0.0, star='', filename='',
                  name='', sourcespecs=[], comments=[]):
@@ -168,6 +188,7 @@ def vecs2spectbl(w0, w1, flux, err=0.0, exptime=0.0, flags=0, instrument=-99,
     datalist = [w0, w1, flux, err, exptime, flags, instrument, normfac, start,
                 end]
     return list2spectbl(datalist, star, filename, name, sourcespecs, comments)
+
 
 def list2spectbl(datalist, star='', filename='', name='', sourcespecs=[],
                  comments=[]):

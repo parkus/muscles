@@ -630,7 +630,7 @@ def split_exact(spectbl, w, keepside):
         return bluspec, redspec
 
 
-def powerbin(spectbl, R=1000.0, lo=1.0, hi=None):
+def powerbin(spectbl, R=1000.0, lo=None, hi=None):
     """
     Rebin a spectrum onto a grid with constant resolving power.
 
@@ -638,12 +638,16 @@ def powerbin(spectbl, R=1000.0, lo=1.0, hi=None):
     within the original wavelength range, the remainder will be discarded.
     """
     start = spectbl['w0'][0]
-    if start < lo: start = lo
+    if lo is None and start == 0:
+        start = 1.0
+    if lo is not None and start < lo:
+        start = lo
     end = spectbl['w1'][-1] if hi is None else hi
     fac = (2.0 * R + 1.0) / (2.0 * R - 1.0)
     maxpow = ceil(log10(end / start) / log10(fac))
     powers = np.arange(maxpow)
     we = start * fac ** powers
+    we[-1] == end
     wbins = utils.edges2bins(we)
     return rebin(spectbl, wbins)
 

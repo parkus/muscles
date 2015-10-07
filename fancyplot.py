@@ -17,6 +17,11 @@ fluxlabel = 'Flux [erg cm$^{-2}$ s$^{-1}$ $\AA^{-1}$]'
 
 starprops = rc.starprops
 
+def instrumentRanges(star, figure):
+    pass
+
+
+
 def stars3DMovieFrames(size, azRate=1.0, altRate=0.0, frames=360, dirpath='muscles_stars_movie_frames'):
     from mayavi import mlab
 
