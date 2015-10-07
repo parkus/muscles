@@ -401,7 +401,7 @@ def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
     if not utils.overlapping(*both):  # they don't overlap
         specs = sum(map(utils.gapsplit, both), [])
         specs.sort(key=key)
-        spec = utils.vstack(specs)
+        spec = reduce(splice, specs)
         assert np.all(spec['w0'][1:] > spec['w0'][:-1])
         return spec
 
@@ -670,7 +670,7 @@ def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime',
     we = [np.append(ww0, ww1[-1]) for ww0, ww1 in zip(w0, w1)]
 
     if any([np.any(n != 1.0) for n in normfac]):
-        warn("Spectra with normfacs != 1.0 are being cladded.")
+        warn("Spectra with normfacs != 1.0 are being coadded.")
 
     weights = [1.0 / ee ** 2 for ee in e] if weights == 'error' else expt
     if maskbaddata:

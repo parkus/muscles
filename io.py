@@ -66,9 +66,13 @@ def read_panspec_sources(star):
     def insti(spec):
         inst = spec['instrument']
         assert np.all(inst == inst[0])
-        inst = inst[0]
+        return inst[0]
     if len(sets.norm_order) > 0:
-        key = lambda spec: sets.norm_order.index(rc.getinststr(insti(spec)))
+        def key(spec):
+            try:
+                return sets.norm_order.index(rc.getinststr(insti(spec)))
+            except ValueError:
+                return insti(spec)
     # else be sure that the spectra are in the default order (the xmm spectra confuse this bc an obs and model are
     # read in)
     else:
@@ -133,6 +137,9 @@ def readstdfits(specfile):
         spectbl = __trimHSTtbl(spectbl)
 
     spectbl = utils.conform_spectbl(spectbl)
+
+    if 'phx' in specfile:
+        spectbl['flux'].unit = ''
 
     return spectbl
 
@@ -507,7 +514,7 @@ def writehlsp(star_or_spectbl, components=True, overwrite=False):
                 prihdr['DETECTOR'] = 'PN'
                 prihdr['FILTER'] = hdr['pn_filter']
 
-    prihdr['TARGNAME'] = star
+    prihdr['TARGNAME'] = star.upper()
     prihdr['RA_TARG'] = rc.starprops['RA'][star]
     prihdr['DEC_TARG'] = rc.starprops['dec'][star]
     prihdr['PROPOSID'] = 13650
@@ -551,36 +558,46 @@ def writehlsp(star_or_spectbl, components=True, overwrite=False):
 
     prihdr['FLUXMIN'] = np.min(spectbl['flux'])
     prihdr['FLUXMAX'] = np.max(spectbl['flux'])
-    prihdr['FLUXUNIT'] = 'erg/s/cm2/ang'
+    prihdr['FLUXUNIT'] = 'erg/s/cm2/ang' if 'phx' not in name else 'arbitrary'
 
     prihdu = fits.PrimaryHDU(header=prihdr)
 
     # CREATE SPECTRUM EXTENSION
     spechdr = fits.Header()
-
-    cols = ['w', 'w0', 'w1', 'flux', 'error', 'exptime', 'flags', 'instrument', 'normfac', 'minobsdate', 'maxobsdate']
-
     spechdr['EXTNAME'] = 'SPECTRUM'
     spechdr['EXTNO'] = 2
+
+    cols = ['w', 'w0', 'w1', 'flux']
     descriptions = ['midpoint of the wavelength bin',
-                    'left/blue edge of the wavelength bin'
-                    'right/red edge of the wavelength bin'
-                    'average flux over the bin'
-                    'error on the flux'
-                    'cumulative exposure time for the bin'
-                    'data quality flags (HST data only)'
-                    'bitmask identifying the source instrument(s). See "instlgnd" extension for a legend.'
-                    'normalization factor applied to the source spectrum'
-                    'modified julian date of start of first exposure'
-                    'modified julian date of end of last exposure' ]
+                    'left/blue edge of the wavelength bin',
+                    'right/red edge of the wavelength bin',
+                    'average flux over the bin']
+    fitsnames = ['WAVELENGTH', 'WAVELENGTH0', 'WAVELENGTH1', 'FLUX']
+    fmts = ['E']*4
+
+    if 'mod' not in name:
+        cols.extend(['error', 'exptime', 'flags', 'minobsdate', 'maxobsdate'])
+        descriptions.extend(['error on the flux',
+                             'cumulative exposure time for the bin',
+                             'data quality flags (HST data only)',
+                             'modified julian date of start of first exposure',
+                             'modified julian date of end of last exposure'])
+        fitsnames.extend(['ERROR', 'EXPTIME', 'DQ', 'EXPSTART', 'EXPEND'])
+        fmts.extend(['E']*2 + ['I'] + ['D']*2)
+
+    if pan:
+        cols.extend(['instrument', 'normfac'])
+        descriptions.extend(['bitmask identifying the source instrument(s). See "instlgnd" extension for a legend.',
+                             'normalization factor applied to the source spectrum'])
+        fitsnames.extend(['INSTRUMENT', 'NORMFAC'])
+        fmts.extend(['J', 'E'])
+
     for i, desc in enumerate(descriptions):
         spechdr['TDESC' + str(i+1)] = desc
-    if len(spectbl.meta['COMMENT']) > 1:
+
+    if len(spectbl.meta['COMMENT']) > 1 and not pan:
         spechdr['COMMENT'] = spectbl.meta['COMMENT']
 
-    fitsnames = ['WAVELENGTH', 'WAVELENGTH0', 'WAVELENGTH1', 'FLUX', 'ERROR', 'EXPTIME', 'DQ', 'INSTRUMENT',
-             'NORMFAC', 'EXPSTART', 'EXPEND']
-    fmts = ['E']*6 + ['I', 'J'] + ['E'] + ['D']*2
     datas = [spectbl[col].data for col in cols]
     units = [spectbl[col].unit.to_string() for col in cols]
     fitscols = [fits.Column(array=a, name=n, format=fmt, unit=u) for a, n, fmt, u in zip(datas, fitsnames, fmts, units)]
@@ -635,26 +652,20 @@ def writehlsp(star_or_spectbl, components=True, overwrite=False):
     # SOURCE SPECTRA LIST
     if 'hst' in name:
         srchdr = fits.Header()
-        srchdr['COMMENT'] = ('This extension contains a list of HST rootnames (9 character string in HST '
-                             'files '
-                             'downloaded from MAST) and dataset IDs of the exposures used to create this '
-                             'spectrum file. The dataset IDs can be used to directly locate the observations through '
-                             'the '
-                             'MAST HST data archive search interface. '
-                             'Multiple '
-                             'identifiers indicate the spectra were coadded. If "CUSTOM" keyword is set to true, '
-                             'this indicates that the component spectra were extracted from the 2D spectral image '
-                             '(x2d) files by the HLSP authors because standard STScI pipeline was unable to identify '
-                             'the location of the spectral trace in the 2D data.')
+        srchdr['COMMENT'] = ('This extension contains a list of HST rootnames (9 character string in HST files '
+                             'downloaded from MAST) and dataset IDs of the exposures used to create this spectrum '
+                             'file. The dataset IDs can be used to directly locate the observations through the MAST '
+                             'HST data archive search interface. Multiple identifiers indicate the spectra were '
+                             'coadded.')
         srchdr['EXTNO'] = 3
         specnames = spectbl.meta['SOURCESPECS']
         if len(specnames) == 0: specnames = [name]
         rootnames = [s.split('_')[5] for s in specnames]
         files = [db.findfiles(band, rn, spectype, fullpaths=True)[0] for rn in rootnames]
         dataids = [fits.getval(f, 'ASN_ID') for f in files]
-        custom = ['custom' in s for s in specnames]
+        custom = [('custom' in s) or ('x2d' in s) for s in specnames]
         assert all(custom) or (not any(custom))
-        srchdr['CUSTOM'] = custom[0]
+        srchdr['CUSTOM'] = custom[0], 'spectrum extracted from x2d (bad x1d)'
 
         fitscols = [fits.Column(name='ROOTNAME', format='9A', array=rootnames),
                     fits.Column(name='DATASET_ID', format='9A', array=dataids)]

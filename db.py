@@ -320,6 +320,9 @@ def hlsppath(name):
         filt = rc.HLSPgratings[filt].lower()
         product = 'component-spec'
 
+    if inst == 'polynomial-fit':
+        return 'polynomial fits not separately saved'
+
     name = ('hlsp_muscles_{tel}_{inst}_{star}_{filter}_v{version}_{product}.fits'
             ''.format(tel=tel, inst=inst, star=star, filter=filt, version=rc.version, product=product))
     return os.path.join(rc.hlsppath, name)
