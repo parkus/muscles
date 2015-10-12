@@ -2,14 +2,14 @@ import mypy.plotutils as pu
 import matplotlib.pyplot as plt
 import os
 import mypy.my_numpy as mnp
-import rc, io, reduce, db
+import rc, io, reduce, db, utils, plot
 import matplotlib as mpl
 import itertools
 import uneven.functions as un
 import spectralPhoton.functions as sp
 import numpy as np
-import spectralPhoton.functions as sp
 from astropy.io import fits
+from matplotlib.ticker import AutoMinorLocator
 
 linestyles = itertools.cycle(['-', '--', ':', '.-'])
 linefluxlabel = '$\lambda$-Integrated Flux \n[erg cm$^{-2}$ s$^{-1}$]'
@@ -17,9 +17,121 @@ fluxlabel = 'Flux [erg cm$^{-2}$ s$^{-1}$ $\AA^{-1}$]'
 
 starprops = rc.starprops
 
-def instrumentRanges(star, figure):
-    pass
+def spectralAnatomy(axes, star='gj832', scale_fac=100.):
+    """Takes a set of two vertically stacked axes and plots some info. Adjusting the plot spacing is up to the user."""
 
+    ax_top, ax_bot = axes
+
+    # make plot of full spectrum
+    spec = io.read(db.panpath(star))[0]
+    spec_rebin = utils.fancyBin(spec, maxpow=30000)
+    ymax = np.max(spec_rebin['flux'][spec_rebin['w1'] > 3000.])
+    (ax0, line0), (ax1, line1) = splitSpec(spec_rebin, ax=ax_top, wsplit=3000., scale_fac=scale_fac)
+
+    # add instrument ranges to the top plot
+    txt_offset_frac = 0.25
+
+    # first get size of text in axis units to put the bars in the right place
+    h_txt_pts = mpl.rcParams['font.size']
+    pts2axx, pts2axy = pu.textSize(ax_top, 'axes')
+    h_txt_ax = pts2axy * h_txt_pts
+    y_bar_ax = 1 - h_txt_ax*2 - 0.05
+    y_bot_ax = y_bar_ax - 0.05
+
+    # shrink data lines and add whitespace for the bars
+    shrink_fac = y_bot_ax
+    ylim = ymax/shrink_fac
+    ax0.set_ylim(0.0, ylim/scale_fac)
+    ax1.set_ylim(0.0, ylim)
+    pts2datax, pts2datay = pu.textSize(ax0, 'data')  # remember that pts2datax will be in log space
+    y_bot_data = y_bot_ax * ax0.get_ylim()[1]
+    ax0.axhspan(y_bot_data, ylim, fc='w', ec='w', alpha=0.7, zorder=3)
+
+    # now add the bars for the instruments of note
+    # coordinate crap
+    h_txt_data = h_txt_pts * pts2datay
+    y_bar_data = y_bar_ax * ax0.get_ylim()[1]
+    y_txt_data = y_bar_data + 0.05 * ylim/scale_fac
+
+    # now add the bars
+    def rangebar(rng, label):
+        ax0.annotate('', xy=(rng[0],y_bar_data), xytext=(rng[1],y_bar_data), arrowprops={'arrowstyle':'|-|'}, zorder=4)
+        ax0.annotate('', xy=(rng[0],y_bar_data), xytext=(rng[1],y_bar_data), arrowprops={'arrowstyle':'<->'}, zorder=4)
+        mid = np.sqrt(rng[0]*rng[1])
+        ax0.text(mid, y_txt_data, label, va='bottom', ha='center', zorder=11)
+    insts = ['xobs', 'apec', 'euv', 'hst', 'phx']
+    rngs = [rc.instranges[key] for key in insts]
+    labels = [rc.instnames[key] for key in insts]
+    map(rangebar, rngs, labels)
+
+    # annotate lya model and Mg II lines
+    txt_offset_x = h_txt_pts * pts2datax * txt_offset_frac
+    def vtxt(w, label):
+        ax0.text(w, y_bot_data, label + ' ', ha='right', va='top', rotation='vertical')
+    vtxt(1215, 'Reconstructed Ly$\\alpha$')
+    vtxt(2793, 'Mg$\ $II')
+
+    ax0.set_ylabel(fluxlabel)
+    ax1.set_ylabel(fluxlabel)
+
+    ax_bot.set_xlabel('Wavelength [$\AA$]')
+
+    # LINE LIST PLOT
+    spec_fuv = utils.keepranges(spec, 1170, 1680)
+    plot.specstep(spec, ax=ax_bot, err=False)
+    ymax = 1.5 * np.max(utils.keepranges(spec_fuv, 1500, 1600)['flux'])
+    ymin = 2*np.min(spec_fuv['flux'])
+    ax_bot.set_ylim(ymin, ymax)
+    ax_bot.autoscale(axes='x', tight=True)
+    mloc = AutoMinorLocator()
+    ax_bot.xaxis.set_minor_locator(mloc)
+
+    # # read in the line list provided for the hlsp and mark all lines
+    # yspace = ymax*0.2
+    # search_fac = 1.003
+    # linefile = rc.root + '/share/hlsp/line_list.csv'
+    # with open(linefile) as f:
+    #     for line in f:
+    #         pieces = line.strip().split(',')
+    #         lbl = pieces[0]
+    #         if lbl == 'H I':
+    #             continue
+    #         waves = filter(None, pieces)
+    #         waves = np.array(waves, float)
+    #
+    #         local = mnp.inranges(spec_fuv['flux'], [[waves.min()/search_fac, waves.max()*search_fac]])
+    #         local_max = np.max(spec_fuv['flux'][local])
+    #
+    #         ylbl = yspace + local_max
+    #         xlbl = waves.mean()
+    #         ax_bot.text(xlbl, ylbl, lbl, rotation='vertical', ha='center', va='bottom')
+    #         for wave in waves:
+    #             frac = 0.7 if wave > xlbl else -0.7
+    #             cs = 'bar,angle=180,fraction={}'.format(frac)
+    #             ax_bot.annotate('', xy=(xlbl, ylbl), xytext=(wave, local_max), xycoords='data', textcoords='data',
+    #                             arrowprops=dict(arrowstyle='-', connectionstyle=cs))
+
+    # mark Lya
+
+
+def splitSpec(spec, ax=None, wsplit=3000., scale_fac=50.):
+    ax1 = plt.gca() if ax is None else ax
+    wmin, wmax = spec['w0'][0], spec['w1'][-1]
+    ax1.set_xscale('log')
+
+    ax2 = ax1.twinx()
+    leftspec = utils.keepranges(spec, 0.0, wsplit)
+    rightspec = utils.keepranges(spec, wsplit, np.inf)
+    step = lambda spec, ax: plot.specstep(spec, err=False, ax=ax, color='k', autolabel=False)
+    leftline = step(leftspec, ax1)
+    rightline = step(rightspec, ax2)
+    ax1.set_xlim(wmin, wmax)
+    ax2.set_ylim(0.0, None)
+    ax1.set_ylim(0.0, ax2.get_ylim()[1] / scale_fac)
+
+    ax1.axvline(wsplit, ls=':')
+
+    return (ax1, leftline), (ax2, rightline)
 
 
 def stars3DMovieFrames(size, azRate=1.0, altRate=0.0, frames=360, dirpath='muscles_stars_movie_frames'):

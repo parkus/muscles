@@ -201,6 +201,18 @@ instruments = ['hst_cos_g130m','hst_cos_g160m','hst_sts_g430l','hst_sts_g430m',
                'xmm_epc_multi','xmm_epc_pn---','mod_phx_-----','mod_lya_young','mod_euv_young', 'mod_apc_-----']
 instvals = [2**i for i in range(len(instruments))]
 
+# for use in making plots
+instranges = {'xobs': [5., 60.], 'xmm': [5., 60.], 'cxo': [1.0, 2.0], 'euv': [100., 1170.], 'hst': [1170., 5700.],
+              'apec': [60., 100.], 'phx': [5700., 55000.], 'lya': lyacut, 'c130m': [1170., 1460.],
+              'c160m': [1390., 1785.], 'c230l': [1670., 3190.], 's140m': [1170., 1710.], 's230m': [1605., 3070.],
+              's230h': [2380., 2890.], 's230l': [1570., 3190.], 's430m': [3795., 4080.], 's430l': [2895., 5710.]}
+instnames = {'xobs': 'XMM or Chandra', 'xmm': 'XMM', 'cxo': 'Chandra', 'euv': 'Empirical EUV Estimate',
+             'hst': 'HST', 'apec': 'APEC Model Corona', 'phx': 'PHOENIX Model Photosphere',
+             'lya': 'Ly$\\alpha$ Reconstruction', 'c130m': 'HST COS G130M', 'c160m': 'HST COS G160M',
+             'c230l': 'HST COS G230L', 's140m': 'HST STIS E140M', 's230m': 'HST STIS E230M',
+             's230h': 'HST STIS E230H', 's230l': 'HST STIS G230L', 's430m': 'HST STIS G430M',
+             's430l': 'HST STIS G430L'}
+
 # for use in making FITS headers
 HLSPtelescopes = {'hst':'HST', 'cxo':'CXO', 'xmm':'XMM', 'mod':'MODEL'}
 HLSPinstruments = {'cos':'COS', 'sts':'STIS', 'euv':'EUV-SCALING', 'lya':'LYA-RECONSTRUCTION', 'phx':'PHX',

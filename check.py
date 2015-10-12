@@ -138,10 +138,10 @@ def vetpanspec(pan_or_star, constant_dw=None, redlim=8000.0):
     if constant_dw is None:
         plotfun = specstep
     else:
-        panspec = red.evenbin(panspec, constant_dw)
+        panspec = utils.evenbin(panspec, constant_dw)
         wbins = utils.wbins(panspec)
         def plotfun(spec, **kwargs):
-            s = red.rebin(spec, wbins)
+            s = utils.rebin(spec, wbins)
             return specstep(s, **kwargs)
 
     for f in files:
@@ -178,7 +178,7 @@ def vetnormfacs(spec, panspec, normfac, normranges):
 
     # rebin each spec to the lowest res within the overlap
     def coarsebin(s):
-        overspec = red.rebin(s, overbins)
+        overspec = utils.rebin(s, overbins)
         return red.splice(s, overspec)
     spec, panspec = map(coarsebin, [spec, panspec])
 

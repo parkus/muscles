@@ -4,14 +4,15 @@ Created on Tue Nov 18 18:02:03 2014
 
 @author: Parke
 """
-
+from _warnings import warn
+from math import ceil, log10, sqrt
 import rc, io, db
 import mypy.my_numpy as mnp
+from mypy import specutils
 import numpy as np
 from astropy.table import Table, Column
 from astropy.table import vstack as tblstack
 from os import path
-import reduce as red
 
 keys = ['units', 'dtypes', 'fmts', 'descriptions', 'colnames']
 spectbl_format = [rc.spectbl_format[key] for key in keys]
@@ -23,15 +24,18 @@ def fancyBin(spec, maxpow=30000):
     pieces = []
     while len(spec) > 0:
         i = spec['instrument'][0]
-        argpiece = (spec['instrument'] == i)
-        piece = spec[argpiece]
-        spec = spec[~argpiece]
-        w = (spec['w0'] + spec['w1']) / 2.0
-        dw = (spec['w1'] - spec['w0'])
+        insti = (spec['instrument'] == i)
+        _, ends = mnp.block_edges(insti)
+        split = ends[0]
+        piece = spec[:split]
+        spec = spec[split:]
+        w = (piece['w0'] + piece['w1']) / 2.0
+        dw = (piece['w1'] - piece['w0'])
         Rs = w / dw
         if Rs.min() > maxpow:
-            piece = reduce.reb
-
+            piece = powerbin(piece, maxpow, keep_remainder='fat')
+        pieces.append(piece)
+    return vstack(pieces)
 
 
 def mag(spectbl, band='J'):
@@ -59,9 +63,9 @@ def flux_integral(spectbl, wa=None, wb=None, normed=False):
             spectbl = add_normflux(spectbl)
 
     if wa is not None:
-        spectbl = red.split_exact(spectbl, wa, 'red')
+        spectbl = split_exact(spectbl, wa, 'red')
     if wb is not None:
-        spectbl = red.split_exact(spectbl, wb, 'blue')
+        spectbl = split_exact(spectbl, wb, 'blue')
 
     dw = spectbl['w1'] - spectbl['w0']
 
@@ -235,6 +239,13 @@ def vstack(spectbls, name=''):
     else:
         star = stars[0]
 
+    spectbls = filter(lambda s: len(s) > 0, spectbls)
+
+    getbeg = lambda s: s['w0'][0]
+    getend = lambda s: s['w1'][-1]
+    begs, ends = np.array(map(getbeg, spectbls)), np.array(map(getend, spectbls))
+    assert np.all(begs[1:] >= ends[:-1])
+
     sourcespecs = []
     comments = []
     for s in spectbls:
@@ -247,8 +258,7 @@ def vstack(spectbls, name=''):
     for colname in colnames:
         data.append(np.concatenate([s[colname] for s in spectbls]))
 
-    return list2spectbl(data, star, name=name, sourcespecs=sourcespecs,
-                        comments=comments)
+    return list2spectbl(data, star, name=name, sourcespecs=sourcespecs, comments=comments)
 
 def gapsplit(spec_or_bins):
     w0, w1 = __getw0w1(spec_or_bins)
@@ -396,3 +406,155 @@ def __getw0w1(spec_or_bins):
     else:
         w0, w1 = wbins(spec_or_bins).T
     return w0, w1
+
+
+def rebin(spec, newbins):
+    """Rebin the spectrum, dealing with gaps in newbins if appropriate."""
+
+    # get overlapping bins, warn if some don't overlap
+    _, overnew = argoverlap(spec, newbins, method='tight')
+    Nkeep = np.sum(overnew)
+    if Nkeep == 0:
+        warn('All newbins fall outside of spec. Returning empty spectrum.')
+        return spec[0:0]
+    if Nkeep < len(newbins):
+        warn('Some newbins fall outside of spec and will be discarded.')
+    newbins = newbins[overnew]
+
+    # split at gaps and rebin. no bins covering a gap in spec should remain in
+    # newbins, so there shouldn't be a need to split newgaps
+    splitbins = gapsplit(newbins)
+    if len(splitbins) > 1:
+        specs = []
+        for bins in splitbins:
+            trim = keepranges(spec, bins[0, 0], bins[-1, 1], ends='loose')
+            specs.append(rebin(trim, bins))
+        return vstack(specs)
+
+    # trim down spec to avoid gaps (gaps are handled in code block above)
+    spec = keepranges(spec, newbins[0, 0], newbins[-1, 1], ends='loose')
+
+    # rebin
+    w0, w1 = newbins.T
+    newedges = bins2edges(newbins)
+    oldedges = wedges(spec)
+    dwnew, dwold = map(np.diff, [newedges, oldedges])
+    flux, error, flags = specutils.rebin(newedges, oldedges, spec['flux'],
+                                         spec['error'], spec['flags'])
+    insts = mnp.rebin(newedges, oldedges, spec['instrument'], 'or')
+    normfac = mnp.rebin(newedges, oldedges, spec['normfac'], 'avg')
+    start = mnp.rebin(newedges, oldedges, spec['minobsdate'], 'min')
+    end = mnp.rebin(newedges, oldedges, spec['maxobsdate'], 'max')
+    expt = mnp.rebin(newedges, oldedges, spec['exptime'], 'avg')
+
+    # spectbl accoutrments
+    star, name, fn, sf = [spec.meta[s] for s in
+                          ['STAR', 'NAME', 'FILENAME', 'SOURCESPECS']]
+
+    return vecs2spectbl(w0, w1, flux, error, expt, flags, insts, normfac,
+                              start, end, star, fn, name, sf)
+
+
+def evenbin(spectbl, dw, lo=None, hi=None):
+    if lo is None: lo = np.min(spectbl['w0'])
+    if hi is None: hi = np.max(spectbl['w1'])
+    newedges = np.arange(lo, hi, dw)
+    newbins = edges2bins(newedges)
+    return rebin(spectbl, newbins)
+
+
+def powerbin(spectbl, R=1000.0, lo=None, hi=None, keep_remainder=False):
+    """
+    Rebin a spectrum onto a grid with constant resolving power.
+
+    If keep_remainder is False and the constant R grid does not permit an integer number of bins to exactly cover the
+    original wavelength range, a fractional bin at the end of the range will be discarded. Otherwise it can be set to
+    fat or skinny to specify whether the fraction bin should be combined with the previous or kept as a fractional bin.
+    """
+    start = spectbl['w0'][0]
+    if lo is None and start == 0:
+        start = 1.0
+    if lo is not None and start < lo:
+        start = lo
+    end = spectbl['w1'][-1] if hi is None else hi
+    fac = (2.0 * R + 1.0) / (2.0 * R - 1.0)
+    maxpow = ceil(log10(end / start) / log10(fac)) + 1
+    powers = np.arange(maxpow)
+    we = start * fac ** powers
+    if keep_remainder == 'skinny':
+        we[-1] = end
+    elif keep_remainder == 'fat':
+        we[-2] = end
+        we = we[:-1]
+    else:
+        we = we[:-1]
+    if len(we) < 2:
+        we = np.array([start, end])
+    wbins = edges2bins(we)
+    return rebin(spectbl, wbins)
+
+
+def split_exact(spectbl, w, keepside):
+    """
+    Split a spectrum at exactly the specified wavelength, dealing with new
+    fractional bins by augmenting the error according to Poisson statistics.
+
+    Parameters
+    ----------
+    spectbl : muscles spectrum
+    w : float
+        wavelength at which to trim
+    keepside : {'red'|'blue'|'both'}
+
+    Result
+    ------
+    splitspecs : muscles spectrum
+        one or two spectables according to the keepside setting
+    """
+    keepblu = (keepside in ['blue', 'both'])
+    keepred = (keepside in ['red', 'both'])
+
+    # find the index of the bin w falls in
+    flag, i = utils.specwhere(spectbl, w)
+
+    if flag == 1:
+        # w is in a bin of the spectbl
+        # parse out info from bin that covers w
+        error = spectbl[i]['error']
+        w0, w1 = spectbl['w0'][i], spectbl['w1'][i]
+        dw = w1 - w0
+
+        # make tables with modified edge bin
+        if keepblu:
+            if w == w0:
+                bluspec = Table(spectbl[:i], copy=True)
+            else:
+                bluspec = Table(spectbl[:i + 1], copy=True)
+                dw_new = w - w0
+                error_new = error * sqrt(dw / dw_new)
+                bluspec[-1]['w1'] = w
+                bluspec[-1]['error'] = error_new
+        if keepred:
+            redspec = Table(spectbl[i:], copy=True)
+            if w != w0:
+                dw_new = w1 - w
+                error_new = error * sqrt(dw / dw_new)
+                redspec[0]['w0'] = w
+                redspec[0]['error'] = error_new
+    else:
+        # w is outside of the spectbl, in a gap, or right on a bin edge,
+        # then i works as a slice
+        if keepblu:
+            bluspec = Table(spectbl[:i], copy=True)
+        if keepred:
+            redspec = Table(spectbl[i:], copy=True)
+
+    if keepblu: assert np.all(bluspec['w1'] > bluspec['w0'])
+    if keepred: assert np.all(redspec['w1'] > redspec['w0'])
+
+    if keepside == 'blue':
+        return bluspec
+    if keepside == 'red':
+        return redspec
+    if keepside == 'both':
+        return bluspec, redspec

@@ -237,19 +237,12 @@ def readtxt(specfile):
         else:
             raise ValueError('crap.')
         e = 0.0
-        we = mids2edges(wmid)
+        if 'euv' in specfile:
+            we = np.array([100., 200., 300., 400., 500., 600., 700., 800., 912., 1170.])
+        else:
+            we = mids2edges(wmid)
         w0, w1 = we[:-1], we[1:]
-
-        # deal with overbinning
-        f_uniq = np.unique(f)
-        w0_, w1_ = [], []
-        for ff in f_uniq:
-            keep = (ff == f)
-            w0_.append(np.min(w0[keep]))
-            w1_.append(np.max(w1[keep]))
-        w0, w1 = map(np.array, [w0_, w1_])
-        isort = np.argsort(w0)
-        w0, w1, f = w0[isort], w1[isort], f_uniq[isort]
+        f = np.interp((w0 + w1) / 2.0, wmid, f)
 
         inst = db.getinsti(specfile)
         spectbl = utils.vecs2spectbl(w0, w1, f, e, instrument=inst, filename=specfile)

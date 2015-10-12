@@ -12,6 +12,7 @@ import numpy as np
 
 stars = rc.stars
 
+
 def texname(star):
     with open(rc.target_list_tex) as f:
         texnames = f.read().splitlines()
@@ -40,7 +41,7 @@ def comparespecs(stars, **kwargs):
         binfunc = kwargs['binfunc']
         del kwargs['binfunc']
     else:
-        binfunc = lambda s: reduce.powerbin(s, R=5000.0, lo=1100.0, hi=5000.0)
+        binfunc = lambda s: utils.powerbin(s, R=5000.0, lo=1100.0, hi=5000.0)
 
     plts = []
     for star in stars:
@@ -128,21 +129,12 @@ def specstep(spectbl, *args, **kwargs):
     if type(spectbl) is str:
         spectbls = io.read(spectbl)
         return [specstep(s, *args, **kwargs) for s in spectbls]
-    if 'key' in kwargs:
-        key = kwargs['key']
-        del kwargs['key']
-    else:
-        key = 'flux'
-    if 'err' in kwargs:
-        err = kwargs['err']
-        del kwargs['err']
-    else:
-        err = True if key == 'flux' else False
-    if 'ylabel' in kwargs:
-        ylbl = kwargs['ylabel']
-        del kwargs['ylabel']
-    else:
-        ylbl = 'Flux [erg/s/cm$^2$/$\AA$]' if key == 'flux' else ''
+
+    ax = kwargs.pop('ax', plt.gca())
+    key = kwargs.pop('key', 'flux')
+    err = kwargs.pop('err', (True if key == 'flux' else False))
+    ylbl = kwargs.pop('ylabel', ('Flux [erg s$^{-1}$ cm$^{-2}$ $\AA^{-1}$]' if key == 'flux' else ''))
+    autolabel = kwargs.pop('autolabel', True)
 
     #parse data from table
     w0, w1, f, e = np.array([spectbl[s] for s in ['w0','w1', key, 'error']])
@@ -151,8 +143,9 @@ def specstep(spectbl, *args, **kwargs):
 
     #plot flux
     fplt = specplot(wbins, f, *args, **kwargs)
-    plt.xlabel('Wavelength [$\AA$]')
-    plt.ylabel(ylbl)
+    if autolabel:
+        ax.set_xlabel('Wavelength [$\AA$]')
+        ax.set_ylabel(ylbl)
 
     #plot error
     if err:

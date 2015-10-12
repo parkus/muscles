@@ -5,19 +5,26 @@ Created on Mon Oct 20 15:42:13 2014
 @author: Parke
 """
 
+import os
+from math import sqrt
+from itertools import combinations_with_replacement as combos
+from warnings import warn
+
 import numpy as np
 from astropy.table import Table, vstack
 from astropy.io import fits
-import os
+from scipy.stats import norm
+
 import mypy.my_numpy as mnp
-from math import sqrt, ceil, log10
-from mypy import specutils, statsutils
-import rc, utils, io, check, db
+from mypy import specutils
+import rc
+import utils
+import io
+import check
+import db
 from spectralPhoton.hst.convenience import x2dspec, specphotons
 import spectralPhoton.functions as sp
-from itertools import combinations_with_replacement as combos
-from scipy.stats import norm
-from warnings import warn
+from utils import rebin, evenbin, powerbin, split_exact
 
 colnames = rc.spectbl_format['colnames']
 airglow_ranges = rc.airglow_ranges
@@ -54,8 +61,7 @@ def theworks(star, R=10000.0, dw=1.0, silent=False):
     panspectrum(star, R=R, dw=dw, plotnorms=(not silent), silent=silent)  # panspec and Rspec
 
 
-def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=True,
-                silent=False):
+def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=True, silent=False):
     """
     Coadd and splice the provided spectra into one panchromatic spectrum
     sampled at the native resolutions and constant R.
@@ -392,6 +398,7 @@ def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
     """
     # sort the two spectra
     both = [spectbla, spectblb]
+    both0 = [spectbla, spectblb]
     key = lambda s: s['w0'][0]
     both.sort(key=key)
     spec0, spec1 = both
@@ -436,7 +443,7 @@ def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
         return splice(spec0, spec1)
     if ismodel0 and ismodel1:
         if not silent: print 'Both spectra are purely models in the overlap. Keeping the first of the two.'
-        return splice(spec1, spec0)
+        return splice(both0[1], both0[0])
 
     # otherwise, find the best splice locations
     # get all edges within the overlap
@@ -562,102 +569,6 @@ def splice(spectbla, spectblb):
 
     assert np.all(spec['w0'][1:] > spec['w0'][:-1])
     return spec
-
-
-def split_exact(spectbl, w, keepside):
-    """
-    Split a spectrum at exactly the specified wavelength, dealing with new
-    fractional bins by augmenting the error according to Poisson statistics.
-
-    Parameters
-    ----------
-    spectbl : muscles spectrum
-    w : float
-        wavelength at which to trim
-    keepside : {'red'|'blue'|'both'}
-
-    Result
-    ------
-    splitspecs : muscles spectrum
-        one or two spectables according to the keepside setting
-    """
-    keepblu = (keepside in ['blue', 'both'])
-    keepred = (keepside in ['red', 'both'])
-
-    # find the index of the bin w falls in
-    flag, i = utils.specwhere(spectbl, w)
-
-    if flag == 1:
-        # w is in a bin of the spectbl
-        # parse out info from bin that covers w
-        error = spectbl[i]['error']
-        w0, w1 = spectbl['w0'][i], spectbl['w1'][i]
-        dw = w1 - w0
-
-        # make tables with modified edge bin
-        if keepblu:
-            if w == w0:
-                bluspec = Table(spectbl[:i], copy=True)
-            else:
-                bluspec = Table(spectbl[:i + 1], copy=True)
-                dw_new = w - w0
-                error_new = error * sqrt(dw / dw_new)
-                bluspec[-1]['w1'] = w
-                bluspec[-1]['error'] = error_new
-        if keepred:
-            redspec = Table(spectbl[i:], copy=True)
-            if w != w0:
-                dw_new = w1 - w
-                error_new = error * sqrt(dw / dw_new)
-                redspec[0]['w0'] = w
-                redspec[0]['error'] = error_new
-    else:
-        # w is outside of the spectbl, in a gap, or right on a bin edge,
-        # then i works as a slice
-        if keepblu:
-            bluspec = Table(spectbl[:i], copy=True)
-        if keepred:
-            redspec = Table(spectbl[i:], copy=True)
-
-    if keepblu: assert np.all(bluspec['w1'] > bluspec['w0'])
-    if keepred: assert np.all(redspec['w1'] > redspec['w0'])
-
-    if keepside == 'blue':
-        return bluspec
-    if keepside == 'red':
-        return redspec
-    if keepside == 'both':
-        return bluspec, redspec
-
-
-def powerbin(spectbl, R=1000.0, lo=None, hi=None):
-    """
-    Rebin a spectrum onto a grid with constant resolving power.
-
-    If the constant R grid cannot does not permit an integer number of bins
-    within the original wavelength range, the remainder will be discarded.
-    """
-    start = spectbl['w0'][0]
-    if lo is None and start == 0:
-        start = 1.0
-    if lo is not None and start < lo:
-        start = lo
-    end = spectbl['w1'][-1] if hi is None else hi
-    fac = (2.0 * R + 1.0) / (2.0 * R - 1.0)
-    maxpow = ceil(log10(end / start) / log10(fac))
-    powers = np.arange(maxpow)
-    we = start * fac ** powers
-    we[-1] == end
-    wbins = utils.edges2bins(we)
-    return rebin(spectbl, wbins)
-
-
-def evenbin(spectbl, dw, lo=None, hi=None):
-    if lo is None: lo = np.min(spectbl['w0'])
-    if hi is None: hi = np.max(spectbl['w1'])
-    newedges = np.arange(lo, hi, dw)
-    newbins = utils.edges2bins(newedges)
-    return rebin(spectbl, newbins)
 
 
 def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime',
@@ -876,53 +787,6 @@ def auto_photons(star, inst='all'):
             kwds = {}
         f = db.photonpath(tagfiles[0])
         specphotons(tagfiles, x1dfiles, fitsout=f, clobber=True, **kwds)
-
-
-def rebin(spec, newbins):
-    """Rebin the spectrum, dealing with gaps in newbins if appropriate."""
-
-    # get overlapping bins, warn if some don't overlap
-    _, overnew = utils.argoverlap(spec, newbins, method='tight')
-    Nkeep = np.sum(overnew)
-    if Nkeep == 0:
-        warn('All newbins fall outside of spec. Returning empty spectrum.')
-        return spec[0:0]
-    if Nkeep < len(newbins):
-        warn('Some newbins fall outside of spec and will be discarded.')
-    newbins = newbins[overnew]
-
-    # split at gaps and rebin. no bins covering a gap in spec should remain in
-    # newbins, so there shouldn't be a need to split newgaps
-    splitbins = utils.gapsplit(newbins)
-    if len(splitbins) > 1:
-        specs = []
-        for bins in splitbins:
-            trim = utils.keepranges(spec, bins[0, 0], bins[-1, 1], ends='loose')
-            specs.append(rebin(trim, bins))
-        return utils.vstack(specs)
-
-    # trim down spec to avoid gaps (gaps are handled in code block above)
-    spec = utils.keepranges(spec, newbins[0, 0], newbins[-1, 1], ends='loose')
-
-    # rebin
-    w0, w1 = newbins.T
-    newedges = utils.bins2edges(newbins)
-    oldedges = utils.wedges(spec)
-    dwnew, dwold = map(np.diff, [newedges, oldedges])
-    flux, error, flags = specutils.rebin(newedges, oldedges, spec['flux'],
-                                         spec['error'], spec['flags'])
-    insts = mnp.rebin(newedges, oldedges, spec['instrument'], 'or')
-    normfac = mnp.rebin(newedges, oldedges, spec['normfac'], 'avg')
-    start = mnp.rebin(newedges, oldedges, spec['minobsdate'], 'min')
-    end = mnp.rebin(newedges, oldedges, spec['maxobsdate'], 'max')
-    expt = mnp.rebin(newedges, oldedges, spec['exptime'], 'avg')
-
-    # spectbl accoutrments
-    star, name, fn, sf = [spec.meta[s] for s in
-                          ['STAR', 'NAME', 'FILENAME', 'SOURCESPECS']]
-
-    return utils.vecs2spectbl(w0, w1, flux, error, expt, flags, insts, normfac,
-                              start, end, star, fn, name, sf)
 
 
 def remove_line(spec, wavelength, fill_with=None, minclip=None, silent=False):
