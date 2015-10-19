@@ -17,23 +17,26 @@ fluxlabel = 'Flux [erg cm$^{-2}$ s$^{-1}$ $\AA^{-1}$]'
 
 starprops = rc.starprops
 
-def spectralAnatomy(axes, star='gj832', scale_fac=100.):
+
+def spectralAnatomy(ax=None, star='gj832', scale_fac=100.):
     """Takes a set of two vertically stacked axes and plots some info. Adjusting the plot spacing is up to the user."""
 
-    ax_top, ax_bot = axes
+    if ax is None: ax = plt.gca()
+    ax.set_xscale('log')
+    ax.autoscale(axis='x', tight=True)
 
     # make plot of full spectrum
     spec = io.read(db.panpath(star))[0]
     spec_rebin = utils.fancyBin(spec, maxpow=30000)
     ymax = np.max(spec_rebin['flux'][spec_rebin['w1'] > 3000.])
-    (ax0, line0), (ax1, line1) = splitSpec(spec_rebin, ax=ax_top, wsplit=3000., scale_fac=scale_fac)
+    (ax0, line0), (ax1, line1) = splitSpec(spec_rebin, ax=ax, wsplit=3000., scale_fac=scale_fac)
 
     # add instrument ranges to the top plot
     txt_offset_frac = 0.25
 
     # first get size of text in axis units to put the bars in the right place
     h_txt_pts = mpl.rcParams['font.size']
-    pts2axx, pts2axy = pu.textSize(ax_top, 'axes')
+    pts2axx, pts2axy = pu.textSize(ax, 'axes')
     h_txt_ax = pts2axy * h_txt_pts
     y_bar_ax = 1 - h_txt_ax*2 - 0.05
     y_bot_ax = y_bar_ax - 0.05
@@ -74,17 +77,19 @@ def spectralAnatomy(axes, star='gj832', scale_fac=100.):
     ax0.set_ylabel(fluxlabel)
     ax1.set_ylabel(fluxlabel)
 
-    ax_bot.set_xlabel('Wavelength [$\AA$]')
+    ax0.set_xlabel('Wavelength [$\AA$]')
 
-    # LINE LIST PLOT
-    spec_fuv = utils.keepranges(spec, 1170, 1680)
-    plot.specstep(spec, ax=ax_bot, err=False)
-    ymax = 1.5 * np.max(utils.keepranges(spec_fuv, 1500, 1600)['flux'])
-    ymin = 2*np.min(spec_fuv['flux'])
-    ax_bot.set_ylim(ymin, ymax)
-    ax_bot.autoscale(axes='x', tight=True)
-    mloc = AutoMinorLocator()
-    ax_bot.xaxis.set_minor_locator(mloc)
+    # ax_bot.set_xlabel('Wavelength [$\AA$]')
+    #
+    # # LINE LIST PLOT
+    # spec_fuv = utils.keepranges(spec, 1170, 1680)
+    # plot.specstep(spec, ax=ax_bot, err=False)
+    # ymax = 1.5 * np.max(utils.keepranges(spec_fuv, 1500, 1600)['flux'])
+    # ymin = 2*np.min(spec_fuv['flux'])
+    # ax_bot.set_ylim(ymin, ymax)
+    # ax_bot.autoscale(axes='x', tight=True)
+    # mloc = AutoMinorLocator()
+    # ax_bot.xaxis.set_minor_locator(mloc)
 
     # # read in the line list provided for the hlsp and mark all lines
     # yspace = ymax*0.2
@@ -116,8 +121,6 @@ def spectralAnatomy(axes, star='gj832', scale_fac=100.):
 
 def splitSpec(spec, ax=None, wsplit=3000., scale_fac=50.):
     ax1 = plt.gca() if ax is None else ax
-    wmin, wmax = spec['w0'][0], spec['w1'][-1]
-    ax1.set_xscale('log')
 
     ax2 = ax1.twinx()
     leftspec = utils.keepranges(spec, 0.0, wsplit)
@@ -125,7 +128,6 @@ def splitSpec(spec, ax=None, wsplit=3000., scale_fac=50.):
     step = lambda spec, ax: plot.specstep(spec, err=False, ax=ax, color='k', autolabel=False)
     leftline = step(leftspec, ax1)
     rightline = step(rightspec, ax2)
-    ax1.set_xlim(wmin, wmax)
     ax2.set_ylim(0.0, None)
     ax1.set_ylim(0.0, ax2.get_ylim()[1] / scale_fac)
 
@@ -637,3 +639,25 @@ def specSnapshot(star, inst, trange, wrange, n=100, ax=None, vCen=None, maxpts=5
     ax.set_ylabel(fluxlabel)
 
     return pu.errorpoly(w, spec, err, **kwargs)
+
+
+def phxFit(star='gj832', ax=None):
+    if ax is None: ax = plt.gca()
+    pan = io.read(db.panpath(star))[0]
+    xf = db.findfiles('ir', 'phx', star, fullpaths=True)
+    phx = io.read(xf)[0]
+    phx['flux'] *= pan['normfac'][-1]
+    pan = pan[pan['instrument'] != pan['instrument'][-1]]
+    rng = [phx['w0'][0], 6000.]
+    phx, pan = [utils.keepranges(spec, rng, ends='loose') for spec in [phx, pan]]
+    ax.autoscale(axis='x', tight=True)
+    phx = utils.rebin(phx, utils.wbins(pan))
+    cut = 3200.
+    (ax0, pline0), (ax1, pline1) = splitSpec(pan, wsplit=cut, scale_fac=15.0)
+
+    # pline = plot.specstep(pan, color='k', err=False)
+    plotit = lambda s, ax: plot.specstep(s, ax=ax, color='k', alpha=0.5, err=False)
+    xline0 = plotit(utils.keepranges(phx, 0.0, cut), ax0)
+    plotit(utils.keepranges(phx, cut, np.inf), ax1)
+
+    ax0.legend((pline0, xline0), ('$HST$ Data', 'PHONEIX Model'), loc='lower right')
