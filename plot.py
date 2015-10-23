@@ -7,7 +7,7 @@ Created on Wed Nov 19 12:11:41 2014
 
 import matplotlib.pyplot as plt
 from mypy.specutils import plot as specplot
-import rc, io, utils, db, reduce
+import rc, io, utils, db
 import numpy as np
 
 stars = rc.stars
@@ -102,6 +102,28 @@ def normspec(spectbl, **kwargs):
 
     return nplt, eplt
 
+
+def phxCompare(star, wlim=None, ax=None):
+    if ax is None: ax = plt.gca()
+
+    xf = db.findfiles('ir', 'phx', star, fullpaths=True)
+    pf = db.panpath(star)
+
+    phx = io.read(xf)[0]
+    pan = io.read(pf)[0]
+    if wlim is not None:
+        phx, pan = utils.keepranges(phx, wlim), utils.keepranges(pan, wlim)
+
+    Fbol = utils.bolo_integral(star)
+    pan['normflux'] = pan['flux']/Fbol
+    phx['normflux'] = phx['flux']*pan['normfac'][-1]/Fbol
+
+    specstep(pan, key='normflux', label='Panspec', ax=ax)
+    specstep(phx, key='normflux', label='Phoenix', ax=ax)
+    ax.set_xlim(wlim)
+    ax.legend()
+
+
 def specstep(spectbl, *args, **kwargs):
     """
     Plot the spectrum using a stairstep curve and preserving any gaps.
@@ -130,7 +152,7 @@ def specstep(spectbl, *args, **kwargs):
         spectbls = io.read(spectbl)
         return [specstep(s, *args, **kwargs) for s in spectbls]
 
-    ax = kwargs.pop('ax', plt.gca())
+    ax = kwargs['ax'] if 'ax' in kwargs else plt.gca()
     key = kwargs.pop('key', 'flux')
     err = kwargs.pop('err', (True if key == 'flux' else False))
     ylbl = kwargs.pop('ylabel', ('Flux [erg s$^{-1}$ cm$^{-2}$ $\AA^{-1}$]' if key == 'flux' else ''))
