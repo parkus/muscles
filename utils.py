@@ -12,14 +12,18 @@ from mypy import specutils
 import numpy as np
 from astropy.table import Table, Column
 from astropy.table import vstack as tblstack
+from astropy import constants as const
+from astropy import units as u
 from os import path
+from scipy.signal import argrelmax
+from scipy.integrate import quad
 
 keys = ['units', 'dtypes', 'fmts', 'descriptions', 'colnames']
 spectbl_format = [rc.spectbl_format[key] for key in keys]
 units, dtypes, fmts, descriptions, colnames = spectbl_format
 
 
-def fancyBin(spec, maxpow=30000):
+def fancyBin(spec, maxpow=30000, mindw=None):
     """Rebin a spectrum to a coarser resolving power, but only where this actually makes it coarser."""
     pieces = []
     while len(spec) > 0:
@@ -28,12 +32,19 @@ def fancyBin(spec, maxpow=30000):
         _, ends = mnp.block_edges(insti)
         split = ends[0]
         piece = spec[:split]
+        if len(piece) <= 2:
+            pieces.append(piece)
+            continue
         spec = spec[split:]
         w = (piece['w0'] + piece['w1']) / 2.0
         dw = (piece['w1'] - piece['w0'])
-        Rs = w / dw
-        if Rs.min() > maxpow:
-            piece = powerbin(piece, maxpow, keep_remainder='fat')
+        if mindw is None:
+            Rs = w / dw
+            if Rs.min() > maxpow:
+                piece = powerbin(piece, maxpow, keep_remainder='fat')
+        else:
+            if dw.max() < mindw:
+                piece = evenbin(piece, dw=mindw, keep_remainder='fat')
         pieces.append(piece)
     return vstack(pieces)
 
@@ -42,7 +53,7 @@ def mag(spectbl, band='J'):
     w = (spectbl['w0'] + spectbl['w1']) / 2.0
     f = spectbl['flux']
 
-    files = {'J':'2MASSJ.txt', 'H':'2MASSH.txt', 'K':'2MASSKs.txt'}
+    files = {'J':'2MASSJ.txt', 'H':'2MASSH.txt', 'K':'2MASSKs.txt', 'FUV':'GALEX-FUV.txt', 'NUV':'GALEX-NUV.txt'}
 
     filterfile = path.join(rc.filterpath, files[band])
     with open(filterfile) as filter:
@@ -54,6 +65,20 @@ def mag(spectbl, band='J'):
 
     mag = -2.5*np.log10(filterflux) + zeropoint
     return mag
+
+
+def bolo_integral(star):
+    """Compute the integral of all flux for the star."""
+
+    pan = io.read(db.panpath(star))[0]
+    fit_unnormed = blackbody_fit(star)
+    normfac = pan[-1]['normfac']
+
+    Ibody = flux_integral(pan)[0]
+    Itail = normfac*quad(fit_unnormed, pan['w1'][-1], np.inf)[0]
+    I = Ibody + Itail
+
+    return I
 
 
 def flux_integral(spectbl, wa=None, wb=None, normed=False):
@@ -77,12 +102,12 @@ def flux_integral(spectbl, wa=None, wb=None, normed=False):
 
 def bol2sol(a):
     """Convert bolometric-normalized fluxes to Earth-equivalent fluxes."""
-    return a*1363100
+    return a*rc.insolation
 
 def add_normflux(spectbl):
     """Add columns to the spectbl that are the bolometric-normalized flux and
     associated error."""
-    normfac = flux_integral(spectbl)
+    normfac = bolo_integral(spectbl.meta['STAR'])
     spectbl['normflux'] = spectbl['flux']/normfac
     spectbl['normerr'] = spectbl['error']/normfac
     return spectbl
@@ -288,6 +313,19 @@ def keepranges(spectbl, *args, **kwargs):
     ranges. *args can either be a Nx2 array of ranges or w0, w1. **kwargs
     just for ends={'tight'|'loose'}"""
     keep = argrange(spectbl, *args, **kwargs)
+
+    if 'ends' in kwargs and kwargs['ends'] == 'exact':
+        rngs = args[0] if len(args) == 1 else args
+        # for speed, trim the spectrum to start
+        spectbl = keepranges(spectbl, rngs, ends='loose')
+        rngs = np.reshape(rngs, [-1, 2])
+        specs = []
+        for rng in rngs:
+            _spec = split_exact(spectbl, rng[0], 'red')
+            _spec = split_exact(_spec, rng[1], 'blue')
+            specs.append(_spec)
+        return vstack(specs)
+
     return spectbl[keep]
 
 def exportrange(spectbl, w0, w1, folder, overwrite=False):
@@ -319,8 +357,7 @@ def argrange(spec_or_bins, *args, **kwargs):
     else:
         ends = 'tight'
     wranges = args[0] if len(args) == 1 else args
-    wranges = np.array(wranges)
-    wranges = np.reshape(wranges, [wranges.size / 2, 2])
+    wranges = np.reshape(wranges, [-1, 2])
 
     inrange = np.zeros(len(spec_or_bins), bool)
     for wr in wranges:
@@ -455,11 +492,12 @@ def rebin(spec, newbins):
                               start, end, star, fn, name, sf)
 
 
-def evenbin(spectbl, dw, lo=None, hi=None):
+def evenbin(spectbl, dw, lo=None, hi=None, keep_remainder=False):
     if lo is None: lo = np.min(spectbl['w0'])
     if hi is None: hi = np.max(spectbl['w1'])
-    newedges = np.arange(lo, hi, dw)
-    newbins = edges2bins(newedges)
+    we = np.arange(lo, hi+dw, dw)
+    we = _handle_bin_remainder(we, hi, keep_remainder)
+    newbins = edges2bins(we)
     return rebin(spectbl, newbins)
 
 
@@ -481,15 +519,7 @@ def powerbin(spectbl, R=1000.0, lo=None, hi=None, keep_remainder=False):
     maxpow = ceil(log10(end / start) / log10(fac)) + 1
     powers = np.arange(maxpow)
     we = start * fac ** powers
-    if keep_remainder == 'skinny':
-        we[-1] = end
-    elif keep_remainder == 'fat':
-        we[-2] = end
-        we = we[:-1]
-    else:
-        we = we[:-1]
-    if len(we) < 2:
-        we = np.array([start, end])
+    we = _handle_bin_remainder(we, end, keep_remainder)
     wbins = edges2bins(we)
     return rebin(spectbl, wbins)
 
@@ -515,7 +545,7 @@ def split_exact(spectbl, w, keepside):
     keepred = (keepside in ['red', 'both'])
 
     # find the index of the bin w falls in
-    flag, i = utils.specwhere(spectbl, w)
+    flag, i = specwhere(spectbl, w)
 
     if flag == 1:
         # w is in a bin of the spectbl
@@ -558,3 +588,47 @@ def split_exact(spectbl, w, keepside):
         return redspec
     if keepside == 'both':
         return bluspec, redspec
+
+
+def blackbody_fit(star):
+    """Return a function that is a blackbody fit to the phoenix spectrum for the star. The fit is to the unnormalized
+    phoenix spectrum, so the fit function values must be multiplied by the appropriate normalization factor to match
+    the normalized spectrum."""
+
+    phx = io.read(db.findfiles('ir', 'phx', star))[0]
+
+    # recursively identify relative maxima until there are fewer than N points
+    N = 10000
+    keep = np.arange(len(phx))
+    while len(keep) > N:
+        temp, = argrelmax(phx['flux'][keep])
+        keep = keep[temp]
+
+    Teff = rc.starprops['Teff'][star]
+    efac = const.h * const.c / const.k_B / (Teff * u.K)
+    efac  = efac.to(u.angstrom).value
+    w = (phx['w0'] + phx['w1']) / 2.0
+    w = w[keep]
+    planck_shape = 1.0/w**5/(np.exp(efac/w) - 1)
+    y = phx['flux'][keep]
+
+    Sfy = np.sum(planck_shape * y)
+    Sff = np.sum(planck_shape**2)
+
+    norm = Sfy/Sff
+
+    return lambda w: norm/w**5/(np.exp(efac/w) - 1)
+
+
+def _handle_bin_remainder(we, end, keep_remainder):
+    if keep_remainder == 'skinny':
+        we[-1] = end
+    elif keep_remainder in ['fat', True]:
+        if len(we) <= 2:
+            we[-1] = end
+        else:
+            we[-2] = end
+            we = we[:-1]
+    else:
+        we = we[:-1]
+    return we
