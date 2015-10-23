@@ -32,8 +32,11 @@ flaredir = productspath + '/flare_catalogs'
 proppath = root + '/share/starprops'
 moviepath = productspath + '/movies'
 filterpath = '/Users/rolo7566/Datasets/shared/filter response curves'
+sharepath = root +'/share'
 
 starprops = sc.SciCatalog(proppath, readOnly=True, silent=True)
+contbandpath = sharepath + '/continuum_bands.csv'
+contbands = np.loadtxt(contbandpath, delimiter=',')
 
 datafolders = ['x-ray', 'uv', 'visible', 'ir']
 bandmap = {'u':'uv', 'x':'x-ray', 'v':'visible', 'r':'ir'}
@@ -48,8 +51,11 @@ stdbandpath = root + '/settings/stdbands.json'
 #root = r'C:\Users\Parke\Google Drive\Grad School\PhD Work\MUSCLES'
 
 
-stars = starprops.indices()
+stars = list(starprops.values.sort('Teff').index)
 observed = [star for star in stars if starprops['observed'][star]]
+hosts = [star for star in stars if starprops['host'][star]]
+
+insolation = 1363100. # cgs
 
 # -----------------------------------------------------------------------------
 # STANDARD BANDS
@@ -198,7 +204,7 @@ specstrings = ['x1d', 'mod_euv', 'mod_lya', 'spec', 'sx1', 'mod_phx', 'coadd']
 instruments = ['hst_cos_g130m','hst_cos_g160m','hst_sts_g430l','hst_sts_g430m',
                'hst_sts_g140m','hst_sts_e230m','hst_sts_e230h','hst_sts_g230l',
                'hst_cos_g230l','hst_sts_e140m','mod_gap_fill-','mod_euv_-----',
-               'xmm_epc_multi','xmm_epc_pn---','mod_phx_-----','mod_lya_young','mod_euv_young', 'mod_apc_-----']
+               'xmm_epc_multi','xmm_epc_pn---','cxo_', 'mod_phx_-----','mod_lya_young','mod_euv_young', 'mod_apc_-----']
 instvals = [2**i for i in range(len(instruments))]
 
 # for use in making plots
@@ -234,6 +240,17 @@ def getinsti(instrument):
     except ValueError:
         return -99
 
+
+def expand_inst_abbrv(abbrv):
+    insts = filter(lambda s: abbrv in s, instruments)
+    if len(insts) > 1:
+        raise ValueError('More than one match.')
+    elif len(insts) == 0:
+        raise ValueError('No matches.')
+    else:
+        return insts[0]
+
+
 def MASTlabels(name):
     """
     Return the MAST telescop and instrume values given a filename.
@@ -262,6 +279,7 @@ class StarSettings:
     def __init__(self, star):
         self.star = star
         self.custom_extractions = []
+        self.tag_extractions = {}
         self.reject_specs = []
         self.notes = []
         self.custom_ranges = {'configs':[], 'ranges':[]}
@@ -269,6 +287,12 @@ class StarSettings:
         self.norm_order = []
         self.prenormed = []
         self.weird_norm = {}
+
+    def add_tag_extraction(self, config, **kwds):
+        """Add a custom extraction for the tags as a config string and then kwds to provide
+        to the custom extraction function in reduce."""
+        config = expand_inst_abbrv(config)
+        self.tag_extractions[config] = kwds
 
     def add_custom_extraction(self, config, **kwds):
         """Add a custom extraction os a config string and then kwds to provide
@@ -285,6 +309,23 @@ class StarSettings:
         """Add good wavelength range for a spectrum."""
         self.norm_ranges['configs'].append(config)
         self.norm_ranges['ranges'].append(ranges)
+
+    def get_custom_extraction(self, config):
+        configmatch = lambda s: config in s['config']
+        configs = filter(configmatch, self.custom_extractions)
+        if len(configs) > 1:
+            raise ValueError('multiple custom range matches')
+        elif len(configs) == 1:
+            return configs[0]['kwds']
+        else:
+            return None
+
+    def get_tag_extraction(self, config):
+        config = expand_inst_abbrv(config)
+        try:
+            return self.tag_extractions[config]
+        except KeyError:
+            return None
 
     def get_custom_range(self, config):
         configmatch = lambda s: s in config
@@ -330,6 +371,7 @@ def loadsettings(star):
             return defaultobject.__dict__[key]
     ss = StarSettings(star)
     ss.custom_extractions = safeget('custom_extractions')
+    ss.tag_extractions = safeget('tag_extractions')
     ss.notes = safeget('notes')
     ss.reject_specs = safeget('reject_specs')
     ss.custom_ranges = safeget('custom_ranges')
