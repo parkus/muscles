@@ -6,7 +6,7 @@ from astropy.io import fits
 
 def findfiles(path_or_band, *substrings, **kwargs):
     """Look for a files in directory at path that contains ALL of the strings
-    in substrings in its filename. Add fullpaths=True if desired."""
+    in substrings in its filename. Add fullpaths=False if desired."""
 
     if not os.path.exists(path_or_band):
         band = path_or_band if len(path_or_band) > 1 else rc.bandmap[path_or_band]
@@ -17,8 +17,10 @@ def findfiles(path_or_band, *substrings, **kwargs):
         return all(hasstring)
 
     files = filter(good, os.listdir(path_or_band))
-    if 'fullpaths' in kwargs and kwargs['fullpaths'] == True:
-        files = [os.path.join(path_or_band, f) for f in files]
+    if 'fullpaths' in kwargs and kwargs['fullpaths'] == False:
+        return files
+
+    files = [os.path.join(path_or_band, f) for f in files]
     return files
 
 
@@ -26,6 +28,7 @@ def validpath(name):
     if os.path.exists(name):
         return name
     else:
+        name = os.path.basename(name)
         band = name[0]
         folder = rc.bandmap[band]
         path = os.path.join(rc.datapath, folder, name)
@@ -459,11 +462,12 @@ def sub_customfiles(specfiles):
 
 
 def coaddgroups(star, nosingles=False):
-    """Return a list of groups of files that should be coadded.
+    """Return a list of groups of files that should be coadded (only HST files).
     Chooses the best source files and avoids dulicates."""
     allfiles = allsourcefiles(star)
     allfiles = sub_customfiles(allfiles)
-    filterfiles = lambda s: filter(lambda ss: s in ss, allfiles)
+    hstfiles = filter(lambda s: 'hst' in s, allfiles)
+    filterfiles = lambda s: filter(lambda ss: s in ss, hstfiles)
     files = map(filterfiles, rc.instruments)
     files = filter(len, files)
     if nosingles:
