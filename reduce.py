@@ -60,6 +60,9 @@ def theworks(star, R=10000.0, dw=1.0, silent=False):
     if not silent: print '\n\nstitching spectra together'
     panspectrum(star, R=R, dw=dw, plotnorms=(not silent), silent=silent)  # panspec and Rspec
 
+    # write hlsp
+    io.writehlsp(star, overwrite=True)
+
 
 def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=True, silent=False):
     """
@@ -94,7 +97,8 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=True, silent=
             if not silent:
                 print ('trimming spectra in {} to the ranges {}'
                        ''.format(names[i], goodranges))
-            specs[i] = utils.keepranges(specs[i], goodranges, ends='tight')
+            ends = 'loose' if 'cos_g130m' in names[i] else 'tight'
+            specs[i] = utils.keepranges(specs[i], goodranges, ends=ends)
 
     # remove airglow lines from COS
     if not silent:
@@ -107,21 +111,12 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=True, silent=
         #            keep = [[0.0, safe_ranges[3,0]], [safe_ranges[3,1], np.inf]]
         #            specs[i] = utils.keepranges(specs[i], keep, ends='loose')
 
-    # trim EUV and PHX models so they aren't used to fill small gaps in
-    # UV data
+    # trim PHX models so they aren't used to fill small gaps in UV data
     if not silent:
-        print '\n\ttrimming PHOENIX and EUV model spectra'
-    uvmin, uvmax = np.inf, 0.0
-    for s, n in zip(specs, names):
-        if db.parse_band(n) == 'u' and db.parse_observatory(n) != 'mod':
-            thismin, thismax = s['w0'][0], s['w1'][-1]
-            if thismin < uvmin: uvmin = thismin
-            if thismax > uvmax: uvmax = thismax
+        print '\n\ttrimming PHOENIX to visible+'
     for i in range(len(specs)):
         if 'mod_phx' in names[i]:
-            specs[i] = split_exact(specs[i], uvmax, 'red')
-        if 'mod_euv' in names[i]:
-            specs[i] = split_exact(specs[i], uvmin, 'blue')
+            specs[i] = split_exact(specs[i], rc.vis[0], 'red')
 
     # normalize and splice according to input order
     spec = specs[0]
@@ -767,24 +762,28 @@ def auto_customspec(star, silent=False):
 def auto_photons(star, inst='all'):
     alltagfiles = db.findfiles('u', 'tag', star, fullpaths=True)
     allx1dfiles = db.findfiles('u', 'x1d', star, fullpaths=True)
+    sets = rc.loadsettings(star)
 
     if inst == 'all':
         instruments = map(db.parse_instrument, alltagfiles)
         instruments = list(set(instruments))
-        #FIXME: some echelle data have different numbers of orders, which the function for finding overlapping
         instruments = filter(lambda s: 'cos' in s, instruments)
     else:
-        instruments = [inst]
+        instruments = inst if type(inst) is list else [inst]
 
     for instrument in instruments:
         getInstFiles = lambda files: filter(lambda s: instrument in s, files)
         tagfiles = getInstFiles(alltagfiles)
+        if len(tagfiles) == 0:
+            continue
         x1dfiles = getInstFiles(allx1dfiles)
 
-        if 'cos_g230l' in instrument:
-            kwds = {'extrsize':30, 'bkoff':[30, -30], 'bksize':[20, 20]}
-        else:
-            kwds = {}
+        kwds = sets.get_tag_extraction(instrument)
+        if kwds is None:
+            if 'cos_g230l' in instrument:
+                kwds = {'extrsize':30, 'bkoff':[30, -30], 'bksize':[20, 20]}
+            else:
+                kwds = {}
         f = db.photonpath(tagfiles[0])
         specphotons(tagfiles, x1dfiles, fitsout=f, clobber=True, **kwds)
 
@@ -1393,7 +1392,7 @@ def __same_instrument(spectbls):
     instruments = []
     for s in spectbls: instruments.extend(s['instrument'].data)
     instruments = np.array(instruments)
-    if any(instruments[:-1] != instruments[1:]):
+    if any(instruments != instruments[0]):
         raise ValueError('There are multiple instruments present in the '
                          'spectbls.')
     return instruments[0]
