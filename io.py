@@ -56,6 +56,11 @@ def readpans(star):
     panfiles = db.allpans(star)
     return sum(map(read, panfiles), [])
 
+
+def readpan(star):
+    return read(db.panpath(star))[0]
+
+
 def read_panspec_sources(star):
     sets = rc.loadsettings(star)
     files, lyafile = db.panfiles(star)
