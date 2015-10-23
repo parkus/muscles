@@ -18,10 +18,9 @@ fluxlabel = 'Flux [erg cm$^{-2}$ s$^{-1}$ $\AA^{-1}$]'
 starprops = rc.starprops
 
 
-def spectralAnatomy(ax=None, star='gj832', scale_fac=100.):
+def spectralAnatomy(ax=plt.gca(), star='gj832', scale_fac=100.):
     """Takes a set of two vertically stacked axes and plots some info. Adjusting the plot spacing is up to the user."""
 
-    if ax is None: ax = plt.gca()
     ax.set_xscale('log')
     ax.autoscale(axis='x', tight=True)
 
@@ -54,21 +53,15 @@ def spectralAnatomy(ax=None, star='gj832', scale_fac=100.):
     # coordinate crap
     h_txt_data = h_txt_pts * pts2datay
     y_bar_data = y_bar_ax * ax0.get_ylim()[1]
-    y_txt_data = y_bar_data + 0.05 * ylim/scale_fac
+    # y_txt_data = y_bar_data + 0.05 * ylim/scale_fac
 
     # now add the bars
-    def rangebar(rng, label):
-        ax0.annotate('', xy=(rng[0],y_bar_data), xytext=(rng[1],y_bar_data), arrowprops={'arrowstyle':'|-|'}, zorder=4)
-        ax0.annotate('', xy=(rng[0],y_bar_data), xytext=(rng[1],y_bar_data), arrowprops={'arrowstyle':'<->'}, zorder=4)
-        mid = np.sqrt(rng[0]*rng[1])
-        ax0.text(mid, y_txt_data, label, va='bottom', ha='center', zorder=11)
     insts = ['xobs', 'apec', 'euv', 'hst', 'phx']
     rngs = [rc.instranges[key] for key in insts]
     labels = [rc.instnames[key] for key in insts]
-    map(rangebar, rngs, labels)
+    [rangebar(ax0, r, l) for r,l in zip(rngs, labels)]
 
     # annotate lya model and Mg II lines
-    txt_offset_x = h_txt_pts * pts2datax * txt_offset_frac
     def vtxt(w, label):
         ax0.text(w, y_bot_data, label + ' ', ha='right', va='top', rotation='vertical')
     vtxt(1215, 'Reconstructed Ly$\\alpha$')
@@ -643,21 +636,34 @@ def specSnapshot(star, inst, trange, wrange, n=100, ax=None, vCen=None, maxpts=5
 
 def phxFit(star='gj832', ax=None):
     if ax is None: ax = plt.gca()
+    ax.autoscale(axis='x', tight=True)
+    ax.set_yscale('log')
+
     pan = io.read(db.panpath(star))[0]
+    bolo = utils.bolo_integral(star)
     xf = db.findfiles('ir', 'phx', star, fullpaths=True)
     phx = io.read(xf)[0]
     phx['flux'] *= pan['normfac'][-1]
     pan = pan[pan['instrument'] != pan['instrument'][-1]]
+    fmin = np.min(pan['error'][pan['error'] > 0])/bolo
     rng = [phx['w0'][0], 6000.]
     phx, pan = [utils.keepranges(spec, rng, ends='loose') for spec in [phx, pan]]
-    ax.autoscale(axis='x', tight=True)
-    phx = utils.rebin(phx, utils.wbins(pan))
-    cut = 3200.
-    (ax0, pline0), (ax1, pline1) = splitSpec(pan, wsplit=cut, scale_fac=15.0)
+    phx, pan = [utils.fancyBin(s, mindw=10.0) for s in [phx, pan]]
+    pan['flux'][pan['flux'] < pan['error']/2.0] = np.nan
+    pan['normflux'] = pan['flux']/bolo
+    phx['normflux'] = phx['flux']/bolo
+    ymax = 10**np.ceil(np.log10(np.max(phx['normflux'])))
+    ymin = 10**np.floor(np.log10(fmin) - 3)
+    ax.set_ylim(ymin, ymax)
 
-    # pline = plot.specstep(pan, color='k', err=False)
-    plotit = lambda s, ax: plot.specstep(s, ax=ax, color='k', alpha=0.5, err=False)
-    xline0 = plotit(utils.keepranges(phx, 0.0, cut), ax0)
-    plotit(utils.keepranges(phx, cut, np.inf), ax1)
+    pline = plot.specstep(pan, ax=ax, color='k', err=False, key='normflux')
+    xline = plot.specstep(phx, ax=ax, color='gray', err=False, key='normflux')
+    ax.legend((pline, xline), ('$HST$ Data', 'PHONEIX Model'), loc='lower right')
 
-    ax0.legend((pline0, xline0), ('$HST$ Data', 'PHONEIX Model'), loc='lower right')
+
+def rangebar(y, rng, label, ax=plt.gca(), styles=['|-|', '<->']):
+    for style in styles:
+        ax.annotate('', xy=(rng[1],y), xytext=(rng[0],y), arrowprops={'arrowstyle':style})
+
+    mid = np.sqrt(rng[0]*rng[1]) if ax.get_xscale() == 'log' else sum(rng)/2.0
+    ax.text(mid, y, label + '\n', va='center', ha='center')
