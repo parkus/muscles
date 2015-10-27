@@ -1,6 +1,12 @@
+from os import path
+from astropy import constants as const
+import numpy as np
 import io, db, rc, utils
 from astropy.table import Table
 import mypy.specutils as su
+import pysynphot as psp
+import sys
+import cStringIO
 
 def phx_compare_single(star):
     pan = io.read(db.panpath(star))[0]
@@ -42,3 +48,38 @@ def fuv_cont_flux(star, bolo=True, order=2):
 
     wbins, f, e = utils.wbins(spec), spec['flux'], spec['error']
     fit = su.polyfit()
+
+
+def mag(star_or_spectbl, band='johnson,b', ref='ab'):
+    """Computes magnitudes using STScI's synphot software. Band must follow the convention for that software,
+    e.g. 'johnson,v', 'bessell,j'."""
+
+    if type(star_or_spectbl) is str:
+        spectbl = io.read(db.Rpanpath(star_or_spectbl, 10000))[0]
+    else:
+        spectbl = star_or_spectbl
+    w = (spectbl['w0'] + spectbl['w1']) / 2.0
+    f = spectbl['flux']
+
+    if ref == 'ab':
+        refspec = psp.FlatSpectrum(0.0, fluxunits='abmag')
+    elif ref == 'vega':
+        refspec = psp.Vega
+    elif ref == 'st':
+        refspec = psp.FlatSpectrum(0.0, fluxunits='stmag')
+    else:
+        raise ValueError('Unrecognized ref.')
+
+    # suppress the annoying binset warnings that pop up and I think are not fatal
+    temp = sys.stdout
+    sys.stdout = cStringIO.StringIO()
+
+    bp = psp.ObsBandpass(band)
+    spec = psp.ArraySpectrum(w, f, fluxunits='flam', keepneg=True)
+    obs = psp.Observation(spec, bp)
+    refobs = psp.Observation(refspec, bp)
+    mag = -2.5*np.log10(obs.integrate()/refobs.integrate())
+
+    sys.stdout = temp
+
+    return mag

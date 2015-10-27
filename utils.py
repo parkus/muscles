@@ -6,17 +6,21 @@ Created on Tue Nov 18 18:02:03 2014
 """
 from _warnings import warn
 from math import ceil, log10, sqrt
-import rc, io, db
-import mypy.my_numpy as mnp
-from mypy import specutils
+from os import path
+
 import numpy as np
 from astropy.table import Table, Column
 from astropy.table import vstack as tblstack
 from astropy import constants as const
 from astropy import units as u
-from os import path
 from scipy.signal import argrelmax
 from scipy.integrate import quad
+
+import rc
+import io
+import db
+import mypy.my_numpy as mnp
+from mypy import specutils
 
 keys = ['units', 'dtypes', 'fmts', 'descriptions', 'colnames']
 spectbl_format = [rc.spectbl_format[key] for key in keys]
@@ -47,24 +51,6 @@ def fancyBin(spec, maxpow=30000, mindw=None):
                 piece = evenbin(piece, dw=mindw, keep_remainder='fat')
         pieces.append(piece)
     return vstack(pieces)
-
-
-def mag(spectbl, band='J'):
-    w = (spectbl['w0'] + spectbl['w1']) / 2.0
-    f = spectbl['flux']
-
-    files = {'J':'2MASSJ.txt', 'H':'2MASSH.txt', 'K':'2MASSKs.txt', 'FUV':'GALEX-FUV.txt', 'NUV':'GALEX-NUV.txt'}
-
-    filterfile = path.join(rc.filterpath, files[band])
-    with open(filterfile) as filter:
-        zeropoint = float(filter.readline().strip())
-        wf, yf = np.loadtxt(filter).T
-
-    ff = np.interp(wf, w, f)
-    filterflux = np.trapz(ff*yf, wf)
-
-    mag = -2.5*np.log10(filterflux) + zeropoint
-    return mag
 
 
 def bolo_integral(star):
