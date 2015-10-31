@@ -164,8 +164,11 @@ def vetnormfacs(spec, panspec, normfac, normranges):
     """Check the normalization of files by plotting normalized and unnormalieze
     versions. Called from reduce.panspec"""
     name = spec.meta['NAME']
+    oranges = utils.overlap_ranges(spec, panspec)
     if normranges is None:
-        normranges = utils.gapless_ranges(spec)
+        normranges = oranges
+    else:
+        normranges = mnp.rangeset_intersect(normranges, oranges)
 
     # construct bins from lower res in each normrange
     overbins = []

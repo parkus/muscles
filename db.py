@@ -289,6 +289,10 @@ def coaddpath(specpath):
     return os.path.join(specdir, coaddname)
 
 
+def photometrypath(star):
+    return os.path.join(rc.photometrypath, 'photometry_{}.vot'.format(star))
+
+
 def photonpath(filepath):
     fdir, fname = os.path.split(filepath)
     rootdir, _ = os.path.split(fdir)

@@ -618,3 +618,46 @@ def _handle_bin_remainder(we, end, keep_remainder):
     else:
         we = we[:-1]
     return we
+
+
+def mag(star_or_spectbl, band='B'):
+    """Computes synthetic magnitudes within preset bands."""
+
+    if type(star_or_spectbl) is str:
+        spectbl = io.read(db.Rpanpath(star_or_spectbl, 10000))[0]
+    else:
+        spectbl = star_or_spectbl
+
+    wf, yf, zeropoint = _readband(band)
+    F = bandflux(spectbl, np.array([wf, yf]).T)
+
+    mag = -2.5*np.log10(F) + zeropoint
+    return mag
+
+
+def bandflux(spectbl, band='B'):
+    """Computes the integrated flux within a standard bandpass. Band can be a letter specifying the bandpass or an
+    Nx2 array of wavelength and filter response values."""
+
+    if type(band) is str:
+        wf, yf, _ = _readband(band)
+    else:
+        wf, yf = band.T
+
+    w = (spectbl['w0'] + spectbl['w1']) / 2.0
+    f = spectbl['flux']
+
+    ff = np.interp(wf, w, f)
+    return np.trapz(ff*yf, wf)
+
+
+def _readband(band):
+    files = {'J':'2massJ.txt', 'H':'2massH.txt', 'K':'2massKs.txt', 'B':'tychoB.txt', 'V':'tychoV.txt',
+             'NUV':'galexNUV.txt'}
+
+    filterfile = path.join(rc.filterpath, files[band])
+    with open(filterfile) as filter:
+        zeropoint = float(filter.readline().strip())
+        wf, yf = np.loadtxt(filter).T
+
+    return wf, yf, zeropoint

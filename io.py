@@ -69,9 +69,7 @@ def read_panspec_sources(star):
 
     # if there is a custom normalization order, reorder the spectra accordingly
     def insti(spec):
-        inst = spec['instrument']
-        assert np.all(inst == inst[0])
-        return inst[0]
+        return rc.getinsti(db.parse_instrument(spec.meta['NAME']))
     if len(sets.norm_order) > 0:
         def key(spec):
             try:
@@ -251,6 +249,7 @@ def readtxt(specfile):
 
         inst = db.getinsti(specfile)
         spectbl = utils.vecs2spectbl(w0, w1, f, e, instrument=inst, filename=specfile)
+        spectbl = utils.evenbin(spectbl, 1.0)
         return [spectbl]
     else:
         raise Exception('A parser for {} files has not been implemented.'.format(specfile[2:9]))

@@ -13,10 +13,12 @@ from warnings import warn
 import numpy as np
 from astropy.table import Table, vstack
 from astropy.io import fits
+from astropy import constants as const
+from astropy import units as u
 from scipy.stats import norm
 
 import mypy.my_numpy as mnp
-from mypy import specutils
+from mypy import specutils, pdfutils
 import rc
 import utils
 import io
@@ -25,6 +27,7 @@ import db
 from spectralPhoton.hst.convenience import x2dspec, specphotons
 import spectralPhoton.functions as sp
 from utils import rebin, evenbin, powerbin, split_exact
+import matplotlib.pyplot as plt
 
 colnames = rc.spectbl_format['colnames']
 airglow_ranges = rc.airglow_ranges
@@ -64,7 +67,7 @@ def theworks(star, R=10000.0, dw=1.0, silent=False):
     io.writehlsp(star, overwrite=True)
 
 
-def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=True, silent=False):
+def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=False, silent=False):
     """
     Coadd and splice the provided spectra into one panchromatic spectrum
     sampled at the native resolutions and constant R.
@@ -111,12 +114,36 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=True, silent=
         #            keep = [[0.0, safe_ranges[3,0]], [safe_ranges[3,1], np.inf]]
         #            specs[i] = utils.keepranges(specs[i], keep, ends='loose')
 
+
+    # for easily finding spectra in list
+    def index(str):
+        name = filter(lambda s: str in s, names)
+        assert len(name) == 1
+        return names.index(name[0])
+
+    # normalize PHX to photometry, then 430L/M to PHX
+    if not silent: print 'normalizing phoenix to photometry'
+    iphx = index('phx')
+    phxnorm = norm2photometry(specs[iphx], silent=silent, plotfit=plotnorms)[0]
+    specs[iphx]['flux'] *= phxnorm
+
+    # normalize g430l/m to photometry
+    i430 = index('sts_g430')
+    spec430 = specs[i430]
+    spec430 = utils.keepranges(spec430, 3500., 10000.)
+    norm430 = norm2photometry(spec430, silent=silent, plotfit=plotnorms)
+    if norm430 is None:
+        if not silent: 'normalizing g430l/m data to phoenix instead'
+        norm430 = normalize(specs[iphx], spec430, safe=False, silent=silent)
+    specs[i430]['flux'] *= norm430
+    specs[i430]['error'] *= norm430
+
     # trim PHX models so they aren't used to fill small gaps in UV data
     if not silent:
-        print '\n\ttrimming PHOENIX to visible+'
+        print '\n\ttrimming PHOENIX to 2500+'
     for i in range(len(specs)):
         if 'mod_phx' in names[i]:
-            specs[i] = split_exact(specs[i], rc.vis[0], 'red')
+            specs[i] = split_exact(specs[i], 2500., 'red')
 
     # normalize and splice according to input order
     spec = specs[0]
@@ -229,7 +256,7 @@ def solarspec(date):
     return utils.vstack([u, v])
 
 
-def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False):
+def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False, safe=True):
     """
     Normalize the spectrum b to spectrum a.
 
@@ -274,7 +301,7 @@ def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False):
         return 1.0
 
     # if speca has all zero errors (it's a model), don't normalize to it
-    if np.all(spectbla[overa]['error'] == 0.0):
+    if safe and np.all(spectbla[overa]['error'] == 0.0):
         if not silent:
             print ('the master spectrum {} has all zero errors, so {} will '
                    'not be normalized to it'.format(*names))
@@ -299,7 +326,6 @@ def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False):
                'overlap'.format(*names[order]))
 
     # mask data with flags
-    mask = np.zeros(len(ospeca), bool)
     if flagmask:
         flagged = (ospeca['flags'] > 0) | (ospecb['flags'] > 0)
         mask[flagged] = True
@@ -307,20 +333,28 @@ def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False):
             percent_flagged = np.sum(flagged) / float(len(ospeca)) * 100.0
             print ('{:.2f}% of the data that was flagged in one spectra or '
                    'the other. masking it out.'.format(percent_flagged))
+    else:
+        flagged = np.zeros(len(ospeca), bool)
 
     # mask data where speca has 0.0 errors
-    zeroerr = (ospeca['error'] == 0.0)
-    mask[zeroerr] = True
-    if not silent:
-        percent_zeroerr = np.sum(zeroerr) / float(len(ospeca)) * 100.0
-        print ('{:.2f}% of the data in the master spectrum had zero error. '
-               'masking it out'.format(percent_zeroerr))
+    if safe:
+        zeroerr = (ospeca['error'] == 0.0)
+        if not silent:
+            percent_zeroerr = np.sum(zeroerr) / float(len(ospeca)) * 100.0
+            print ('{:.2f}% of the data in the master spectrum had zero error. '
+                   'masking it out'.format(percent_zeroerr))
+    else:
+        zeroerr = np.zeros(len(ospeca), bool)
 
-    good = ~mask
+    # don't mask out data with low SN because then you bias the result to high flux values
 
     # compute normalization factor
     ospecs = [ospeca, ospecb]
     dw = wbins[:, 1] - wbins[:, 0]
+
+    good = ~(flagged | zeroerr)
+    if np.sum(good) == 0:
+        return 1.0
 
     def getarea(spec):
         area = np.sum(spec['flux'][good] * dw[good])
@@ -344,8 +378,10 @@ def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False):
             print ('{} > {}, so secondary will not be normalized to master'
                    ''.format(p, worry))
         return 1.0
-    #        return spectblb
+
+    # area ratio
     normfac = areas[0] / areas[1]
+
     if worry:
         normfacerr = sqrt((errors[0] / areas[1]) ** 2 +
                           (areas[0] * errors[1] / areas[1] ** 2) ** 2)
@@ -355,14 +391,157 @@ def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False):
         print ('secondary will be normalized by a factor of {} ({})'
                ''.format(normfac, normfacerr))
 
-    #    normspec = Table(spectblb, copy=True)
-    #    nze = (normspec['error'] != 0.0)
-    #    normspec['error'][nze] = mnp.quadsum([normspec['error'][nze]*normfac,
-    #                                          normspec['flux'][nze]*normfacerr], axis=0)
-    #    normspec['flux'] *= normfac
-    #    normspec['normfac'] = normfac
-    #    return normspec
     return normfac
+
+
+def norm2photometry(spec, silent=False, plotfit=False):
+    band_dict = {'HIP:VT':'tychoV', 'HIP:BT':'tychoB', "HIP:Hp":'hipparcos',
+                 'Johnson:B':'johnsonB', 'Johnson:V':'johnsonV', 'Johnson:K':'johnsonK', 'Johnson:J':'johnsonJ',
+                 'Johnson:U':'johnsonU',
+                 "SDSS:u'":"sdssu'", "SDSS:g'":"sdssg'", "SDSS:r'":"sdssr'", "SDSS:i'":"sdssi'", "SDSS:z'":"sdssz'",
+                 "SDSS:u":"sdssu", "SDSS:g":"sdssg", "SDSS:r":"sdssr", "SDSS:i":"sdssi", "SDSS:z":"sdssz",
+                 '2MASS:J':'2massJ', '2MASS:H':'2massH', '2MASS:Ks':'2massKs',
+                 "Spitzer/IRAC:4.5":"spitzerI4.5", "Spitzer/IRAC:3.6":"spitzerI3.6",
+                 "WISE:W1":"wiseW1", "WISE:W2":"wiseW2", "WISE:W3":"wiseW3", "WISE:W4":"wiseW4",
+                 "Landolt:V":"landoltV",
+                 "Cousins:I":"cousinsI", "Cousins:R":"cousinsR",
+                 "VISTA:J":"vistaJ", "VISTA:H":"vistaH", "VISTA:Ks":"vistaKs",
+                 'ALHAMBRA:A613M': 'alhambraA613M', 'ALHAMBRA:A457M': 'alhambraA457M',
+                 'ALHAMBRA:A522M': 'alhambraA522M', 'ALHAMBRA:A646M': 'alhambraA646M',
+                 'ALHAMBRA:A739M': 'alhambraA739M', 'ALHAMBRA:A921M': 'alhambraA921M',
+                 'ALHAMBRA:A892M': 'alhambraA892M', 'ALHAMBRA:A708M': 'alhambraA708M',
+                 'ALHAMBRA:A861M': 'alhambraA861M', 'ALHAMBRA:A425M': 'alhambraA425M',
+                 'ALHAMBRA:A829M': 'alhambraA829M', 'ALHAMBRA:A394M': 'alhambraA394M',
+                 'ALHAMBRA:A678M': 'alhambraA678M', 'ALHAMBRA:A491M': 'alhambraA491M',
+                 'ALHAMBRA:A551M': 'alhambraA551M', 'ALHAMBRA:A802M': 'alhambraA802M',
+                 'ALHAMBRA:A366M': 'alhambraA366M', 'ALHAMBRA:A770M': 'alhambraA770M',
+                 'ALHAMBRA:A581M': 'alhambraA581M', 'ALHAMBRA:A948M': 'alhambraA948M'}
+
+    star = spec.meta["STAR"]
+    if not silent: print "Normalizing {} to photometry.".format(spec.meta['NAME'])
+    tbl = Table.read(db.photometrypath(star))
+    tbl['sed_freq'] = tbl['sed_freq']*1e9
+
+    # convert flux to per freq.
+    wave2freq = lambda w: (const.c/w).to(u.Hz).value
+    w0, w1, flam = [spec[s] for s in ['w0', 'w1', 'flux']]
+    F = flam*(w1 - w0)
+    v0, v1 = map(wave2freq, [w0, w1])
+    fnu = F/(v0 - v1)*1e23 # Jy
+    v = (v0 + v1)/2.0
+    v = v[::-1]
+    fnu = fnu[::-1]
+
+    # select known bands
+    tbl_bands = set(tbl['sed_filter'])
+    known_bands = set(band_dict.keys())
+    usable_bands = tbl_bands & known_bands
+    if not silent:
+        unusable_bands = tbl_bands - known_bands
+        print "Unidentified bands: {}".format(unusable_bands)
+
+    # load all known bands in table
+    bands = {}
+    for id in usable_bands:
+        bandstr = band_dict[id]
+        data = np.loadtxt(os.path.join(rc.filterpath, bandstr + '.txt'), skiprows=1)
+        bands[id] = data
+
+    # trim out of range photometry
+    lo = max(rc.nuv[1], w0[0])
+    hi = w1[-1]
+    checkrange = lambda band: (band[0,0] > lo) and (band[-1,0] < hi)
+    for id, band in bands.items():
+        if not checkrange(band):
+            del bands[id]
+    inrange = np.array([s in bands.keys() for s in tbl['sed_filter']], bool)
+    if np.sum(inrange) == 0:
+        print 'No photometry covers spectrum range.'
+        return None
+    tbl = tbl[inrange]
+
+    # trim to unique photometry
+    uniq = np.unique(tbl['sed_flux'], return_index=True)[1]
+    tbl = tbl[uniq]
+    if not silent:
+        print "{} unique photometry measurements being used to normalize spectrum".format(len(tbl))
+
+    # compute synthetic phot in all bands used in table
+    synphot_dict = {}
+    for key, band in bands.items():
+        wb, rb = band.T
+        vb = wave2freq(wb * u.AA)[::-1]
+        rb = rb[::-1]
+        rbi = np.interp(v, vb, rb)
+        synphot_dict[key] = np.trapz(rbi*fnu, v)/np.trapz(rb, vb) # Jy
+
+    synphot = np.array([synphot_dict[key] for key in tbl['sed_filter']])
+
+    phot = tbl['sed_flux']
+    vp = tbl['sed_freq']
+    cut_prob_all_pts = 0.10
+    while True:
+        S = np.sum(synphot/phot)
+        S2 = np.sum(synphot**2/phot**2)
+        normfac = S/S2
+        # normfac = np.sum(phot*synphot) / np.sum(synphot**2)
+        normsynphot = normfac*synphot
+        residuals = (phot - normsynphot)/phot
+        std = np.std(residuals)
+        cut_prob_single_pt = 1 - (1 - cut_prob_all_pts)**(1.0/len(phot))
+        cut_std = pdfutils.inv_gauss_cdf(cut_prob_single_pt)
+        keep = abs(residuals)/std < cut_std
+        if np.all(keep):
+            break
+        vp, phot, synphot = vp[keep], phot[keep], synphot[keep]
+
+    # normfac_err = std*normfac/np.sqrt(len(phot))
+    # normfac_err = std/np.sqrt(np.sum(synphot**2))
+    normfac_err = std/np.sqrt(S2)
+    if not silent:
+        print "spectrum normalized by {:.2e} with a {:.1f}% uncertainty".format(normfac, 100*normfac_err/normfac)
+
+    if plotfit:
+        synphot, synphot_err = synphot*normfac, synphot*normfac_err
+        fig, (ax0, ax1) = plt.subplots(2, 1, sharex=True)
+
+        # fit
+        xlim = [0.9*min(vp), 1.1*max(vp)]
+        keep = mnp.inranges(v, xlim)
+        v, fnu = v[keep], fnu[keep]
+        N = len(fnu)/1000
+        if N > 1:
+            fnu = mnp.smooth(fnu, N)
+            v, fnu = v[N/2::N], fnu[::N]
+        ax0.set_position([0.1, 0.3, 0.85, 0.65])
+        ax0.plot(v, fnu*normfac, '-k')
+        ax0.fill_between(v, fnu*(normfac - normfac_err), fnu*(normfac + normfac_err), edgecolor='none', color='k',
+                         alpha='0.3')
+        ax0.plot(tbl['sed_freq'], tbl['sed_flux'], 'rx')
+        ax0.errorbar(vp, phot, std*phot, fmt='o', color='g')
+        ax0.plot(vp, synphot, 'kd')
+        ax0.set_yscale('log')
+        ax0.set_xscale('log')
+        ax0.autoscale(axis='y', tight=True)
+        ylim = ax0.get_ylim()
+        ax0.set_ylim(ylim[0]/1.5, ylim[1]*1.5)
+        ax0.set_xlim(xlim)
+        ax1.set_xlabel('frequency [Hz]')
+        ax0.set_ylabel('flux [Jy]')
+
+        # residuals
+        residuals = (phot - synphot)/(phot*std)
+        ax1.set_position([0.1, 0.1, 0.85, 0.2])
+        ax1.plot(vp, residuals, 'k.')
+        ax1.grid()
+        ax1.axhline(0.0, color='k')
+        ax1.set_ylabel('residuals ($\sigma$)')
+        ax1.set_xscale('log')
+        ax1.set_xlim(xlim)
+
+        plt.draw()
+
+    return normfac, normfac_err
 
 
 def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
@@ -420,9 +599,19 @@ def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
     gapsin0 = np.any(mnp.inranges(gaps0.flatten(), wr1))
     gapsin1 = np.any(mnp.inranges(gaps1.flatten(), wr0))
     if gapsin0 or gapsin1:
-        specs = sum(map(utils.gapsplit, both), [])
-        specs.sort(key=key)
-        return reduce(smartsplice, specs)
+        specsa, specsb = map(utils.gapsplit, both)
+        specsa.sort(key=key)
+        specsb.sort(key=key)
+        spec = specsa[0]
+        while len(specsa) > 0:
+            ospecs = filter(lambda s: utils.overlapping(spec, s), specsb)
+            for ospec in ospecs:
+                spec = smartsplice(spec, ospec)
+                specsb.remove(ospec)
+            spec = smartsplice(specsa.pop(0), spec)
+        spec = reduce(splice, specsb, spec)
+        assert np.all(spec['w0'][1:] > spec['w0'][:-1])
+        return spec
 
     # if either spectrum has zeros for errors, don't use it for any of the
     # overlap
@@ -694,12 +883,16 @@ def phxspec(Teff, logg=4.5, FeH=0.0, aM=0.0, repo=rc.phxrepo):
     return utils.list2spectbl(data)
 
 
-def auto_phxspec(star, silent=False):
+def auto_phxspec(star, Teff='fit', silent=False):
     kwds = {}
     for key in ['Teff', 'logg', 'FeH', 'aM']:
         val = rc.starprops[key][star]
         if not np.isnan(val):
             kwds[key] = val
+    if type(Teff) in [float, int]:
+        kwds['Teff'] = Teff
+    if Teff == 'fit':
+        band, Fp, band_dict = io.get_photometry(star, rc.visible[0], 55000.0)
     if not silent:
         print 'interpolating phoenix spectrum for {} with values'.format(star)
         print kwds

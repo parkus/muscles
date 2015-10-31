@@ -23,6 +23,7 @@ codepath = gdrive + '/Python/muscles'
 root = gdrive + '/Grad School/Phd Work/MUSCLES'
 local = '/Users/rolo7566/Datasets/MUSCLES'
 datapath = local + '/data'
+photometrypath = datapath + '/photometry'
 productspath = local + '/products'
 hlsppath = productspath + '/hlsp'
 scratchpath = root + '/scratchwork'
@@ -189,8 +190,9 @@ spectbl_format =  {'units' : ['Angstrom']*2 + ['erg/s/cm2/Angstrom']*2 + ['s',''
 
 stdbands = read_json(stdbandpath)
 
-prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m', 'sts_g430l',
-             'sts_g430m', 'mod_apc']
+# prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m', 'sts_g430l', 'sts_g430m', 'mod_apc']
+prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m', 'cos_g230l', 'sts_g430l', 'sts_g430m', 'mod_phx',
+             'mod_apc']
 
 lyacut = [1209.5, 1222.0]
 
@@ -200,10 +202,13 @@ flare_bands = {#'hst_cos_g130m' : [[1169.5 , 1198.5 ], [1201.7 , 1212.17], [1219
                'hst_cos_g160m' : [[1422.92, 1563.85], [1614.02, 1754.01]]}
 
 specstrings = ['x1d', 'mod_euv', 'mod_lya', 'spec', 'sx1', 'mod_phx', 'coadd']
+
 #listed in normalization order
-instruments = ['hst_cos_g130m','hst_cos_g160m','hst_sts_g430l','hst_sts_g430m',
-               'hst_sts_g140m','hst_sts_e230m','hst_sts_e230h','hst_sts_g230l',
-               'hst_cos_g230l','hst_sts_e140m','mod_gap_fill-','mod_euv_-----',
+# instruments = ['hst_cos_g130m','hst_cos_g160m','hst_sts_g430l','hst_sts_g430m','hst_sts_g140m','hst_sts_e230m',
+#                'hst_sts_e230h','hst_sts_g230l','hst_cos_g230l','hst_sts_e140m','mod_gap_fill-','mod_euv_-----',
+#                'xmm_epc_multi','xmm_epc_pn---','cxo_', 'mod_phx_-----','mod_lya_young','mod_euv_young', 'mod_apc_-----']
+instruments = ['hst_cos_g130m','hst_cos_g160m','hst_cos_g230l','hst_sts_g140m','hst_sts_e140m','hst_sts_e230m',
+               'hst_sts_e230h','hst_sts_g230l','hst_sts_g430l','hst_sts_g430m','mod_gap_fill-','mod_euv_-----',
                'xmm_epc_multi','xmm_epc_pn---','cxo_', 'mod_phx_-----','mod_lya_young','mod_euv_young', 'mod_apc_-----']
 instvals = [2**i for i in range(len(instruments))]
 
@@ -262,7 +267,7 @@ foldersbyband = {'u':'uv', 'v':'visible', 'r':'ir', 'x':'x-ray'}
 def dontnormalize(filename_or_spectbl):
     fos = filename_or_spectbl
     if type(fos) is not str:
-        fos = fos.meta['FILENAME']
+        fos = fos.meta['NAME']
     star = fos.split('_')[4]
     sets = loadsettings(star)
     pn = prenormed if sets.prenormed == [] else sets.prenormed
