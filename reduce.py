@@ -16,17 +16,13 @@ from astropy.io import fits
 from astropy import constants as const
 from astropy import units as u
 from scipy.stats import norm
+import scipy.optimize as opt
 
 import mypy.my_numpy as mnp
 from mypy import specutils, pdfutils
-import rc
-import utils
-import io
-import check
-import db
+import rc, utils, io, check, db
 from spectralPhoton.hst.convenience import x2dspec, specphotons
 import spectralPhoton.functions as sp
-from utils import rebin, evenbin, powerbin, split_exact
 import matplotlib.pyplot as plt
 
 colnames = rc.spectbl_format['colnames']
@@ -121,29 +117,36 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=False, silent
         assert len(name) == 1
         return names.index(name[0])
 
-    # normalize PHX to photometry, then 430L/M to PHX
+    # normalize PHX to photometry
     if not silent: print 'normalizing phoenix to photometry'
     iphx = index('phx')
-    phxnorm = norm2photometry(specs[iphx], silent=silent, plotfit=plotnorms)[0]
+    phxnorm = norm2photometry(specs[iphx], silent=silent, plotfit=plotnorms, clean=True)[0]
     specs[iphx]['flux'] *= phxnorm
+    specs[iphx]['normfac'] = phxnorm
 
-    # normalize g430l/m to photometry
+    # normalize g430l/m to photometry if available, otherwise to PHX
     i430 = index('sts_g430')
     spec430 = specs[i430]
     spec430 = utils.keepranges(spec430, 3500., 10000.)
-    norm430 = norm2photometry(spec430, silent=silent, plotfit=plotnorms)
-    if norm430 is None:
-        if not silent: 'normalizing g430l/m data to phoenix instead'
-        norm430 = normalize(specs[iphx], spec430, safe=False, silent=silent)
+    photometry = io.get_photometry(star, spec430['w0'][0], spec430['w1'][-1])
+    if photometry is not None:
+        tbl, band_dict = photometry
+        if len(tbl) > 3:
+            norm430 = norm2photometry(spec430, photom_tbl=tbl, band_dict=band_dict, silent=silent, plotfit=plotnorms,
+                                      clean=True)[0]
+    else:
+        if not silent: print 'Fewer than three photometry points to normalize to. Using PHX spectrum instead.'
+    norm430 = normalize(specs[iphx], spec430, safe=False, silent=silent)
     specs[i430]['flux'] *= norm430
     specs[i430]['error'] *= norm430
+    specs[i430]['normac'] = norm430
 
     # trim PHX models so they aren't used to fill small gaps in UV data
     if not silent:
         print '\n\ttrimming PHOENIX to 2500+'
     for i in range(len(specs)):
         if 'mod_phx' in names[i]:
-            specs[i] = split_exact(specs[i], 2500., 'red')
+            specs[i] = utils.split_exact(specs[i], 2500., 'red')
 
     # normalize and splice according to input order
     spec = specs[0]
@@ -227,8 +230,8 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=False, silent
     if not silent:
         print ('creating resampled panspecs at R = {:.0f} and dw = {:.1f} AA'
                ''.format(R, dw))
-    Rspec = powerbin(spec, R)
-    dspec = evenbin(spec, dw)
+    Rspec = utils.powerbin(spec, R)
+    dspec = utils.evenbin(spec, dw)
 
     # save to fits
     if savespecs:
@@ -251,8 +254,8 @@ def solarspec(date):
     ufile, vfile = db.solarfiles(date)
     u, v = [io.readcsv(f)[0] for f in (ufile, vfile)]
     w = 1850.0
-    u = split_exact(u, w, 'blue')
-    v = split_exact(v, w, 'red')
+    u = utils.split_exact(u, w, 'blue')
+    v = utils.split_exact(v, w, 'red')
     return utils.vstack([u, v])
 
 
@@ -312,12 +315,12 @@ def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False, safe
     if np.sum(overa) < np.sum(overb):
         ospeca = spectbla[overa]
         wbins = utils.wbins(ospeca)
-        ospecb = rebin(spectblb, wbins)
+        ospecb = utils.rebin(spectblb, wbins)
         order = slice(None, None, -1)
     else:
         ospecb = spectblb[overb]
         wbins = utils.wbins(ospecb)
-        ospeca = rebin(spectbla, wbins)
+        ospeca = utils.rebin(spectbla, wbins)
         order = slice(None, None, 1)
     if not silent:
         over_range = [ospeca['w0'][0], ospeca['w1'][-1]]
@@ -328,7 +331,6 @@ def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False, safe
     # mask data with flags
     if flagmask:
         flagged = (ospeca['flags'] > 0) | (ospecb['flags'] > 0)
-        mask[flagged] = True
         if not silent:
             percent_flagged = np.sum(flagged) / float(len(ospeca)) * 100.0
             print ('{:.2f}% of the data that was flagged in one spectra or '
@@ -394,33 +396,20 @@ def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False, safe
     return normfac
 
 
-def norm2photometry(spec, silent=False, plotfit=False):
-    band_dict = {'HIP:VT':'tychoV', 'HIP:BT':'tychoB', "HIP:Hp":'hipparcos',
-                 'Johnson:B':'johnsonB', 'Johnson:V':'johnsonV', 'Johnson:K':'johnsonK', 'Johnson:J':'johnsonJ',
-                 'Johnson:U':'johnsonU',
-                 "SDSS:u'":"sdssu'", "SDSS:g'":"sdssg'", "SDSS:r'":"sdssr'", "SDSS:i'":"sdssi'", "SDSS:z'":"sdssz'",
-                 "SDSS:u":"sdssu", "SDSS:g":"sdssg", "SDSS:r":"sdssr", "SDSS:i":"sdssi", "SDSS:z":"sdssz",
-                 '2MASS:J':'2massJ', '2MASS:H':'2massH', '2MASS:Ks':'2massKs',
-                 "Spitzer/IRAC:4.5":"spitzerI4.5", "Spitzer/IRAC:3.6":"spitzerI3.6",
-                 "WISE:W1":"wiseW1", "WISE:W2":"wiseW2", "WISE:W3":"wiseW3", "WISE:W4":"wiseW4",
-                 "Landolt:V":"landoltV",
-                 "Cousins:I":"cousinsI", "Cousins:R":"cousinsR",
-                 "VISTA:J":"vistaJ", "VISTA:H":"vistaH", "VISTA:Ks":"vistaKs",
-                 'ALHAMBRA:A613M': 'alhambraA613M', 'ALHAMBRA:A457M': 'alhambraA457M',
-                 'ALHAMBRA:A522M': 'alhambraA522M', 'ALHAMBRA:A646M': 'alhambraA646M',
-                 'ALHAMBRA:A739M': 'alhambraA739M', 'ALHAMBRA:A921M': 'alhambraA921M',
-                 'ALHAMBRA:A892M': 'alhambraA892M', 'ALHAMBRA:A708M': 'alhambraA708M',
-                 'ALHAMBRA:A861M': 'alhambraA861M', 'ALHAMBRA:A425M': 'alhambraA425M',
-                 'ALHAMBRA:A829M': 'alhambraA829M', 'ALHAMBRA:A394M': 'alhambraA394M',
-                 'ALHAMBRA:A678M': 'alhambraA678M', 'ALHAMBRA:A491M': 'alhambraA491M',
-                 'ALHAMBRA:A551M': 'alhambraA551M', 'ALHAMBRA:A802M': 'alhambraA802M',
-                 'ALHAMBRA:A366M': 'alhambraA366M', 'ALHAMBRA:A770M': 'alhambraA770M',
-                 'ALHAMBRA:A581M': 'alhambraA581M', 'ALHAMBRA:A948M': 'alhambraA948M'}
+def norm2photometry(spec, photom_tbl=None, band_dict=None, silent=False, plotfit=False, return_ln_like=False,
+                    return_tbl_and_err=False, clean=False, err='adaptive'):
 
-    star = spec.meta["STAR"]
     if not silent: print "Normalizing {} to photometry.".format(spec.meta['NAME'])
-    tbl = Table.read(db.photometrypath(star))
-    tbl['sed_freq'] = tbl['sed_freq']*1e9
+    if photom_tbl is None:
+        star = spec.meta["STAR"]
+        photometry = io.get_photometry(star, spec['w0'][0], spec['w1'][-1], silent=silent)
+        if photometry is None:
+            return None
+        else:
+            tbl, band_dict = photometry
+    else:
+        tbl = photom_tbl
+    tbl['sed_freq'] *= 1e9 # convert to Hz
 
     # convert flux to per freq.
     wave2freq = lambda w: (const.c/w).to(u.Hz).value
@@ -432,43 +421,9 @@ def norm2photometry(spec, silent=False, plotfit=False):
     v = v[::-1]
     fnu = fnu[::-1]
 
-    # select known bands
-    tbl_bands = set(tbl['sed_filter'])
-    known_bands = set(band_dict.keys())
-    usable_bands = tbl_bands & known_bands
-    if not silent:
-        unusable_bands = tbl_bands - known_bands
-        print "Unidentified bands: {}".format(unusable_bands)
-
-    # load all known bands in table
-    bands = {}
-    for id in usable_bands:
-        bandstr = band_dict[id]
-        data = np.loadtxt(os.path.join(rc.filterpath, bandstr + '.txt'), skiprows=1)
-        bands[id] = data
-
-    # trim out of range photometry
-    lo = max(rc.nuv[1], w0[0])
-    hi = w1[-1]
-    checkrange = lambda band: (band[0,0] > lo) and (band[-1,0] < hi)
-    for id, band in bands.items():
-        if not checkrange(band):
-            del bands[id]
-    inrange = np.array([s in bands.keys() for s in tbl['sed_filter']], bool)
-    if np.sum(inrange) == 0:
-        print 'No photometry covers spectrum range.'
-        return None
-    tbl = tbl[inrange]
-
-    # trim to unique photometry
-    uniq = np.unique(tbl['sed_flux'], return_index=True)[1]
-    tbl = tbl[uniq]
-    if not silent:
-        print "{} unique photometry measurements being used to normalize spectrum".format(len(tbl))
-
     # compute synthetic phot in all bands used in table
     synphot_dict = {}
-    for key, band in bands.items():
+    for key, band in band_dict.items():
         wb, rb = band.T
         vb = wave2freq(wb * u.AA)[::-1]
         rb = rb[::-1]
@@ -480,29 +435,44 @@ def norm2photometry(spec, silent=False, plotfit=False):
     phot = tbl['sed_flux']
     vp = tbl['sed_freq']
     cut_prob_all_pts = 0.10
+    if type(err) is not str:
+        std = err
     while True:
+        if len(phot) < 3:
+            raise ValueError('Only three photometry points (some may have been clipped). Need at least three to '
+                             'safely estimate the scatter.')
         S = np.sum(synphot/phot)
         S2 = np.sum(synphot**2/phot**2)
         normfac = S/S2
         # normfac = np.sum(phot*synphot) / np.sum(synphot**2)
         normsynphot = normfac*synphot
         residuals = (phot - normsynphot)/phot
-        std = np.std(residuals)
-        cut_prob_single_pt = 1 - (1 - cut_prob_all_pts)**(1.0/len(phot))
-        cut_std = pdfutils.inv_gauss_cdf(cut_prob_single_pt)
-        keep = abs(residuals)/std < cut_std
-        if np.all(keep):
+        if err == 'adaptive':
+            std = np.std(residuals)
+        if clean:
+            cut_prob_single_pt = 1 - (1 - cut_prob_all_pts)**(1.0/len(phot))
+            cut_std = pdfutils.inv_gauss_cdf(cut_prob_single_pt)
+            keep = abs(residuals)/std < cut_std
+            if np.all(keep):
+                break
+            vp, phot, synphot = vp[keep], phot[keep], synphot[keep]
+            if return_tbl_and_err:
+                tbl = tbl[keep]
+        else:
             break
-        vp, phot, synphot = vp[keep], phot[keep], synphot[keep]
+
+    if return_tbl_and_err:
+        return tbl, std
 
     # normfac_err = std*normfac/np.sqrt(len(phot))
     # normfac_err = std/np.sqrt(np.sum(synphot**2))
     normfac_err = std/np.sqrt(S2)
+    synphot, synphot_err = synphot*normfac, synphot*normfac_err
+    normed_residuals = (phot - synphot)/(phot*std)
     if not silent:
         print "spectrum normalized by {:.2e} with a {:.1f}% uncertainty".format(normfac, 100*normfac_err/normfac)
 
     if plotfit:
-        synphot, synphot_err = synphot*normfac, synphot*normfac_err
         fig, (ax0, ax1) = plt.subplots(2, 1, sharex=True)
 
         # fit
@@ -530,9 +500,8 @@ def norm2photometry(spec, silent=False, plotfit=False):
         ax0.set_ylabel('flux [Jy]')
 
         # residuals
-        residuals = (phot - synphot)/(phot*std)
         ax1.set_position([0.1, 0.1, 0.85, 0.2])
-        ax1.plot(vp, residuals, 'k.')
+        ax1.plot(vp, normed_residuals, 'k.')
         ax1.grid()
         ax1.axhline(0.0, color='k')
         ax1.set_ylabel('residuals ($\sigma$)')
@@ -541,7 +510,10 @@ def norm2photometry(spec, silent=False, plotfit=False):
 
         plt.draw()
 
-    return normfac, normfac_err
+    if return_ln_like:
+        return -np.sum(0.5*normed_residuals**2)
+    else:
+        return normfac, normfac_err
 
 
 def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
@@ -638,7 +610,7 @@ def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
     # wr[1] is already included because of how searchsorted works
 
     # rebin spectral overlap to we
-    oboth = [rebin(o, wbins) for o in oboth]
+    oboth = [utils.rebin(o, wbins) for o in oboth]
     dw = np.diff(we)
 
     # get flux and variance and mask values with dq flags and nan values
@@ -686,8 +658,8 @@ def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
             return spec0
 
         splicespec = spec1
-        splicespec = split_exact(splicespec, cut0, 'red')
-        splicespec = split_exact(splicespec, cut1, 'blue')
+        splicespec = utils.split_exact(splicespec, cut0, 'red')
+        splicespec = utils.split_exact(splicespec, cut1, 'blue')
         if not silent:
             print ('spectrum {} spliced into {} from {:.2f} to {:.2f}'
                    ''.format(names[1], names[0], cut0, cut1))
@@ -702,7 +674,7 @@ def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
         best = np.nanargmin(var)
         i = i[best]
         cut = we[best]
-        splicespec = split_exact(spec1, cut, 'red')
+        splicespec = utils.split_exact(spec1, cut, 'red')
 
         if not silent:
             print ('spectrum {} spliced into {} from {:.2f} onward'
@@ -730,10 +702,10 @@ def splice(spectbla, spectblb):
 
     # cut up a according to the range of b and stack
     speclist = []
-    leftspec = split_exact(spectbla, spectblb['w0'][0], 'blue')
+    leftspec = utils.split_exact(spectbla, spectblb['w0'][0], 'blue')
     speclist.append(leftspec)
     speclist.append(spectblb)
-    rightspec = split_exact(spectbla, spectblb['w1'][-1], 'red')
+    rightspec = utils.split_exact(spectbla, spectblb['w1'][-1], 'red')
     speclist.append(rightspec)
     spec = utils.vstack(speclist)
 
@@ -885,19 +857,67 @@ def phxspec(Teff, logg=4.5, FeH=0.0, aM=0.0, repo=rc.phxrepo):
 
 def auto_phxspec(star, Teff='fit', silent=False):
     kwds = {}
-    for key in ['Teff', 'logg', 'FeH', 'aM']:
+    for key in ['logg', 'FeH', 'aM']:
         val = rc.starprops[key][star]
         if not np.isnan(val):
             kwds[key] = val
-    if type(Teff) in [float, int]:
-        kwds['Teff'] = Teff
+    Tlit = rc.starprops['Teff'][star]
+    Tlit_err = rc.starprops.errpos['Teff'][star]
     if Teff == 'fit':
-        band, Fp, band_dict = io.get_photometry(star, rc.visible[0], 55000.0)
+        # load in photometry data
+        tbl, band_dict = io.get_photometry(star, rc.vis[0], 55000.0)
+
+        # find minimum using the adaptive error bars and culling outliers
+        def ln_like(Teff):
+            spec = phxspec(Teff, **kwds)
+            return norm2photometry(spec, photom_tbl=tbl, band_dict=band_dict, silent=True, plotfit=False,
+                                   return_ln_like=True, clean=True)
+        if not silent: "Finding Teff that best fits photometry."
+        result = opt.minimize_scalar(lambda Teff: -ln_like(Teff), bracket=[Tlit-Tlit_err, Tlit+Tlit_err],
+                                     bounds=[Tlit-500, Tlit+500], method='bounded', options={'disp': (not silent)})
+        Teff = result.x
+        spec = phxspec(Teff, **kwds)
+        if not silent: print "Best fit Teff of {:.0f} found. Finding confidence interval.".format(Teff)
+
+        # cull outliers for optimal solution, then find error bars using error bars and points from optimal solution
+        tbl, err = norm2photometry(spec, photom_tbl=tbl, band_dict=band_dict, silent=True, plotfit=False,
+                                   return_tbl_and_err=True, clean=True)
+        def constrained_like(Teff):
+            spec = phxspec(Teff, **kwds)
+            return norm2photometry(spec, photom_tbl=tbl, band_dict=band_dict, silent=True, plotfit=False,
+                                   return_ln_like=True, err=err)
+        N = 201
+        for dT in range(100,2001,100):
+            try:
+                Tlim = opt.brentq(lambda T: constrained_like(T) + result.fun + 3, Teff, Teff+dT)
+                break
+            except ValueError:
+                continue
+        dT = Tlim - Teff
+        Tlo = max(2300, Teff - dT)
+        Tgrid = np.linspace(Tlo, Teff+dT, N)
+        Lgrid = np.exp(map(ln_like, Tgrid))
+        Igrid = np.cumsum(np.diff(Tgrid)*mnp.midpts(Lgrid))
+        Imid = Igrid[N/2]
+        I = Igrid[-1]
+        dI = I*0.683/2
+        I0, I1 = Imid - dI, Imid + dI
+        T0, T1 = np.interp([I0, I1], Igrid, mnp.midpts(Tgrid))
+        if not silent: print ("Best-fit phoenix spectrum found with Teff = {:.0f} ({:.0f}-{:.0f}) comapred to "
+                              "literature value of {:.0f}. Saving.".format(Teff, T0, T1, Tlit))
+
+    if Teff == 'lit':
+        Teff = Tlit
+        T0 = Tlit - Tlit_err
+        T1 = Tlit + Tlit_err
     if not silent:
         print 'interpolating phoenix spectrum for {} with values'.format(star)
-        print kwds
-    spec = phxspec(**kwds)
+        print "Teff = {}".format(Teff), kwds
+    spec = phxspec(Teff, **kwds)
     spec.meta['STAR'] = star
+    spec.meta['Teff'] = Teff
+    spec.meta['Terrneg'] = Teff - T0
+    spec.meta['Terrpos'] = T1 - Teff
     path = rc.phxpath(star)
     spec.meta['NAME'] = db.parse_name(path)
     if not silent:

@@ -11,8 +11,10 @@ import numpy as np
 from mypy.my_numpy import mids2edges, block_edges, midpts
 from scipy.io import readsav as spreadsav
 import rc, utils, db
-from astropy.table import Table
+import astropy.table as table
 from astropy.time import Time
+import astropy.constants as const
+import astropy.units as u
 from warnings import warn
 
 legendcomment = ('This extension is a legend for the integer identifiers in the instrument column of the '
@@ -33,7 +35,7 @@ def readphotons(star, inst):
 def readFlareTbl(star, inst, label):
     tblfile = db.findfiles(rc.flaredir, star, inst, label, 'flares', fullpaths=True)
     assert len(tblfile) == 1
-    tbl = Table.read(tblfile[0])
+    tbl = table.Table.read(tblfile[0])
 
     w0, w1 = [], []
     i = 0
@@ -46,7 +48,7 @@ def readFlareTbl(star, inst, label):
         i += 1
     bands = np.array(zip(w0, w1))
 
-    return Table.read(tblfile[0]), bands
+    return table.Table.read(tblfile[0]), bands
 
 
 def readpans(star):
@@ -127,7 +129,7 @@ def read(specfiles):
 
 def readstdfits(specfile):
     """Read a fits file that was created by writefits."""
-    spectbl = Table.read(specfile, hdu=1)
+    spectbl = table.Table.read(specfile, hdu=1)
     spectbl.meta['FILENAME'] = specfile
     spectbl.meta['NAME'] = db.parse_name(specfile)
     try:
@@ -294,6 +296,66 @@ def readsav(specfile):
     data = [w0,w1,flux,err,expt,flags,source,normfac,start,end]
     return [__maketbl(data, specfile)]
 
+
+def get_photometry(star, lo=0.0, hi=np.inf, silent=False):
+    band_dict = {'HIP:VT':'tychoV', 'HIP:BT':'tychoB', "HIP:Hp":'hipparcos',
+                 'Johnson:B':'johnsonB', 'Johnson:V':'johnsonV', 'Johnson:K':'johnsonK', 'Johnson:J':'johnsonJ',
+                 'Johnson:U':'johnsonU',
+                 "SDSS:u'":"sdssu'", "SDSS:g'":"sdssg'", "SDSS:r'":"sdssr'", "SDSS:i'":"sdssi'", "SDSS:z'":"sdssz'",
+                 "SDSS:u":"sdssu", "SDSS:g":"sdssg", "SDSS:r":"sdssr", "SDSS:i":"sdssi", "SDSS:z":"sdssz",
+                 '2MASS:J':'2massJ', '2MASS:H':'2massH', '2MASS:Ks':'2massKs',
+                 "Spitzer/IRAC:4.5":"spitzerI4.5", "Spitzer/IRAC:3.6":"spitzerI3.6",
+                 "WISE:W1":"wiseW1", "WISE:W2":"wiseW2", "WISE:W3":"wiseW3", "WISE:W4":"wiseW4",
+                 "Landolt:V":"landoltV",
+                 "Cousins:I":"cousinsI", "Cousins:R":"cousinsR",
+                 "VISTA:J":"vistaJ", "VISTA:H":"vistaH", "VISTA:Ks":"vistaKs",
+                 'ALHAMBRA:A613M': 'alhambraA613M', 'ALHAMBRA:A457M': 'alhambraA457M',
+                 'ALHAMBRA:A522M': 'alhambraA522M', 'ALHAMBRA:A646M': 'alhambraA646M',
+                 'ALHAMBRA:A739M': 'alhambraA739M', 'ALHAMBRA:A921M': 'alhambraA921M',
+                 'ALHAMBRA:A892M': 'alhambraA892M', 'ALHAMBRA:A708M': 'alhambraA708M',
+                 'ALHAMBRA:A861M': 'alhambraA861M', 'ALHAMBRA:A425M': 'alhambraA425M',
+                 'ALHAMBRA:A829M': 'alhambraA829M', 'ALHAMBRA:A394M': 'alhambraA394M',
+                 'ALHAMBRA:A678M': 'alhambraA678M', 'ALHAMBRA:A491M': 'alhambraA491M',
+                 'ALHAMBRA:A551M': 'alhambraA551M', 'ALHAMBRA:A802M': 'alhambraA802M',
+                 'ALHAMBRA:A366M': 'alhambraA366M', 'ALHAMBRA:A770M': 'alhambraA770M',
+                 'ALHAMBRA:A581M': 'alhambraA581M', 'ALHAMBRA:A948M': 'alhambraA948M',
+                 'UCAC:R': 'ucacR', 'DENIS:J':'denisJ', 'DENIS:I':'denisI', 'DENIS:Ks':'denisKs'}
+
+    tbl = table.Table.read(db.photometrypath(star))
+
+    # select known bands
+    tbl_bands = set(tbl['sed_filter'])
+    known_bands = set(band_dict.keys())
+    usable_bands = tbl_bands & known_bands
+    if not silent:
+        unusable_bands = tbl_bands - known_bands
+        print "Unidentified bands: {}".format(unusable_bands)
+
+    # load all known bands in table
+    bands = {}
+    for id in usable_bands:
+        bandstr = band_dict[id]
+        data = np.loadtxt(path.join(rc.filterpath, bandstr + '.txt'), skiprows=1)
+        bands[id] = data
+
+    # trim out of range photometry
+    checkrange = lambda band: (band[0,0] > lo) and (band[-1,0] < hi)
+    for id, band in bands.items():
+        if not checkrange(band):
+            del bands[id]
+    inrange = np.array([s in bands.keys() for s in tbl['sed_filter']], bool)
+    if np.sum(inrange) == 0:
+        print 'No photometry covers range of {} to {} AA.'.format(lo, hi)
+        return None
+    tbl = tbl[inrange]
+
+    # trim to unique photometry
+    uniq = np.unique(tbl['sed_flux'], return_index=True)[1]
+    tbl = tbl[uniq]
+
+    return tbl, bands
+
+
 def writefits(spectbl, name, overwrite=False):
     """
     Writes spectbls to a standardized MUSCLES FITS file format.
@@ -312,7 +374,7 @@ def writefits(spectbl, name, overwrite=False):
     -------
     None
     """
-    spectbl = Table(spectbl, copy=True)
+    spectbl = table.Table(spectbl, copy=True)
 
     # astropy write function doesn't store list meta correctly, so extract here
     # to add later
@@ -583,11 +645,19 @@ def writehlsp(star_or_spectbl, components=True, overwrite=False):
         fmts.extend(['E']*2 + ['I'] + ['D']*2)
 
     if pan:
-        cols.extend(['instrument', 'normfac'])
+            # add a normalized flux column
+        spectbl = utils.add_normflux(spectbl)
+        spectbl['normflux'].unit['Angstrom-1']
+        spectbl['normerr'].unit['Angstrom-1']
+        spechdr['BOLOFLUX'] = utils.bolo_integral(spectbl.meta['STAR'])
+
+        cols.extend(['instrument', 'normfac', 'normflux', 'normerr'])
         descriptions.extend(['bitmask identifying the source instrument(s). See "instlgnd" extension for a legend.',
-                             'normalization factor applied to the source spectrum'])
-        fitsnames.extend(['INSTRUMENT', 'NORMFAC'])
-        fmts.extend(['J', 'E'])
+                             'normalization factor applied to the source spectrum',
+                             'flux density normalized by the bolometric flux',
+                             'error on bolometrically-normalized flux density'])
+        fitsnames.extend(['INSTRUMENT', 'NORMFAC', 'BOLOFLUX', 'BOLOERR'])
+        fmts.extend(['J', 'E', 'D', 'D'])
 
     for i, desc in enumerate(descriptions):
         spechdr['TDESC' + str(i+1)] = desc
@@ -688,4 +758,28 @@ def writehlsp(star_or_spectbl, components=True, overwrite=False):
     hdus = fits.HDUList(hdus)
     hdus.writeto(hlspname, clobber=overwrite)
 
+
+def read_xsections(species):
+    data = np.loadtxt(path.join(rc.xsectionpath, species.upper()))
+    names = ['w', 'x', 'dx/dT']
+    Nbranches = (data.shape[1] - 3)/2
+    for i in range(Nbranches):
+        names.extend(['y_{}'.format(i), 'dy/dT_{}'.format(i)])
+    tbl = table.Table(data=data, names=names)
+    tbl.meta['Nbranches'] = Nbranches
+
+    tbl['w'] *= 10
+
+    if species == 'H2O':
+        logx = np.log10(tbl['x'][-2:])
+        logw = np.log10(tbl['w'][-2:])
+        m = np.diff(logx) / np.diff(logw)
+        dw = 0.1
+        neww = np.arange(tbl['w'][-1], 2400+dw, dw)
+        newx = 10**(m*(np.log10(neww) - logw[0]) + logx[0])
+        newdata = np.array([neww, newx, np.zeros_like(newx), np.ones_like(newx), np.zeros_like(newx)]).T
+        newtbl = table.Table(data=newdata, names=names)
+        tbl = table.vstack([tbl, newtbl])
+
+    return tbl
 

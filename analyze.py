@@ -5,6 +5,7 @@ import db
 import rc
 import utils
 import mypy.specutils as su
+import numpy as np
 
 
 def phx_compare_single(star):
@@ -35,17 +36,29 @@ def fuv_cont_spec(star):
     return utils.keepranges(spec, rc.contbands, ends='exact')
 
 
-def fuv_cont_flux(star, bolo=True, order=2):
-    """Compute the FUV continuum flux by fitting a quadratic. Compare to the total FUV line flux, Lya flux,
-    and line - Lya flux. Return values in that order.
-    """
-    contspec = fuv_cont_spec()
-    if bolo:
-        bolo = utils.bolo_integral(star)
-        contspec['flux'] /= bolo
-        contspec['error'] /= bolo
+def dissoc_spec(star, species):
+    pan = io.readpan(star)
+    pan = utils.add_photonflux(pan)
+    bolo = utils.bolo_integral(star)  # erg s-1 cm-2
 
-    wbins, f, e = utils.wbins(spec), spec['flux'], spec['error']
-    fit = su.polyfit()
+    xtbl = io.read_xsections(species)
+
+    w = (pan['w0'] + pan['w1']) / 2.0
+    xi = np.interp(w, xtbl['w'], xtbl['x'], 0.0, 0.0)
+    basespec = xi * pan['flux_photon'] / bolo # cm2 * AA-1 erg-1
+
+    xspec_bolo = np.zeros_like(basespec)
+    for i in range(xtbl.meta['Nbranches']):
+        y = xtbl['y_{}'.format(i)]
+        yi = np.interp(w, xtbl['w'], y, 0.0, 0.0)
+        xspec_bolo += basespec*y
+
+    dw = pan['w1'] - pan['w0']
+    dissoc_bolo = np.sum(dw * xspec_bolo) # cm2 erg-1
+    xspec_sol = xspec_bolo * rc.insolation  # s-1 AA-1
+    dissoc_sol = dissoc_bolo * rc.insolation # s-1
+
+    return xspec_bolo, xspec_sol, dissoc_bolo, dissoc_sol
+
 
 

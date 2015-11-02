@@ -661,3 +661,13 @@ def _readband(band):
         wf, yf = np.loadtxt(filter).T
 
     return wf, yf, zeropoint
+
+
+def add_photonflux(spectbl):
+    """Add photon flux and error columns to a spectrum table."""
+    w0, w1 = wbins(spectbl).T
+    dw = w1 - w0
+    Ephoton = const.h * const.c / (dw * u.AA) * np.log(w1/w0)
+    spectbl['flux_photon'] = (spectbl['flux'] / Ephoton).to(1.0/u.cm**2/u.s/u.AA)
+    spectbl['flux_photon_err'] = (spectbl['error'] / Ephoton).to(1.0/u.cm**2/u.s/u.AA)
+    return spectbl

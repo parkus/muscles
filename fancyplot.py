@@ -17,6 +17,16 @@ fluxlabel = 'Flux [erg cm$^{-2}$ s$^{-1}$ $\AA^{-1}$]'
 
 starprops = rc.starprops
 
+def plotnorm(spec_or_star, ax=plt.gca(), clip=1e-10):
+    if type(spec_or_star) is str:
+        spec = io.read(db.Rpanpath(spec_or_star, 10000))[0]
+    else:
+        spec = spec_or_star
+    spec = utils.add_normflux(spec)
+    bad = spec['normflux'] < 1e-10
+    spec['normflux'][bad] = np.nan
+    plot.specstep(spec, ax=ax)
+
 
 def spectralAnatomy(ax=plt.gca(), star='gj832', scale_fac=100.):
     """Takes a set of two vertically stacked axes and plots some info. Adjusting the plot spacing is up to the user."""
@@ -639,7 +649,7 @@ def phxFit(star='gj832', ax=None):
     ax.autoscale(axis='x', tight=True)
     ax.set_yscale('log')
 
-    pan = io.read(db.panpath(star))[0]
+    pan = io.readpan(star)
     bolo = utils.bolo_integral(star)
     xf = db.findfiles('ir', 'phx', star, fullpaths=True)
     phx = io.read(xf)[0]

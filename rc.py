@@ -34,6 +34,7 @@ proppath = root + '/share/starprops'
 moviepath = productspath + '/movies'
 filterpath = '/Users/rolo7566/Datasets/shared/filter response curves'
 sharepath = root +'/share'
+xsectionpath = local + '/xsections'
 
 starprops = sc.SciCatalog(proppath, readOnly=True, silent=True)
 contbandpath = sharepath + '/continuum_bands.csv'
@@ -52,7 +53,7 @@ stdbandpath = root + '/settings/stdbands.json'
 #root = r'C:\Users\Parke\Google Drive\Grad School\PhD Work\MUSCLES'
 
 
-stars = list(starprops.values.sort('Teff').index)
+stars = list(starprops.values.sort('Teff_muscles').index)
 observed = [star for star in stars if starprops['observed'][star]]
 hosts = [star for star in stars if starprops['host'][star]]
 

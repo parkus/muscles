@@ -152,9 +152,7 @@ def vetpanspec(pan_or_star, constant_dw=None, redlim=8000.0):
             x = (spec['w0'][0] + spec['w0'][-1])/2.0
             y = np.mean(spec['flux'])
             inst = db.parse_instrument(f)
-            plt.text(x, y, inst,
-                     bbox={'facecolor':'w', 'alpha':0.5, 'color':p.get_color()},
-                     ha='center', va='center')
+            plt.text(x, y, inst, bbox={'facecolor':'w', 'alpha':0.5, 'color':p.get_color()}, ha='center', va='center')
     plotfun(panspec, color='k', alpha=0.5)
     ymax = np.max(utils.keepranges(panspec, 3000.0, 8000.0)['flux'])
     plt.gca().set_ylim(-0.01 * ymax, 1.05 * ymax)
