@@ -9,6 +9,7 @@ import os
 from math import sqrt
 from itertools import combinations_with_replacement as combos
 from warnings import warn
+import json
 
 import numpy as np
 from astropy.table import Table, vstack
@@ -31,10 +32,7 @@ safe_ranges = [0.0] + list(airglow_ranges.ravel()) + [np.inf]
 safe_ranges = np.reshape(safe_ranges, [len(airglow_ranges) + 1, 2])
 
 
-def theworks(star, R=10000.0, dw=1.0, silent=False):
-    if np.isnan(rc.starprops['Teff'][star]):
-        raise ValueError("Fool! You haven't entered Teff, etc. for {} yet."
-                         "".format(star))
+def theworks(star, newphx=False, silent=False):
 
     try:
         rc.loadsettings(star)
@@ -44,8 +42,11 @@ def theworks(star, R=10000.0, dw=1.0, silent=False):
         sets.save()
 
     # interpolate and save phoenix spectrum
-    if not silent: print '\n\ninterpolating phoenix spectrum'
-    auto_phxspec(star, silent=silent)
+    if newphx:
+        if not silent: print '\n\ninterpolating phoenix spectrum'
+        auto_phxspec(star, silent=silent)
+    else:
+        if not silent: print '\n\nnot interpolating new phoenix spectrum bc you said not to'
 
     # make custom extractions
     if not silent: print '\n\nperforming any custom extractions'
@@ -57,13 +58,13 @@ def theworks(star, R=10000.0, dw=1.0, silent=False):
 
     # make panspectrum
     if not silent: print '\n\nstitching spectra together'
-    panspectrum(star, R=R, dw=dw, plotnorms=(not silent), silent=silent)  # panspec and Rspec
+    panspectrum(star, silent=silent)  # panspec and Rspec
 
     # write hlsp
     io.writehlsp(star, overwrite=True)
 
 
-def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=False, silent=False):
+def panspectrum(star, savespecs=True, plotnorms=False, silent=False):
     """
     Coadd and splice the provided spectra into one panchromatic spectrum
     sampled at the native resolutions and constant R.
@@ -123,23 +124,18 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=False, silent
     phxnorm = norm2photometry(specs[iphx], silent=silent, plotfit=plotnorms, clean=True)[0]
     specs[iphx]['flux'] *= phxnorm
     specs[iphx]['normfac'] = phxnorm
+    rc.normfacs[star]['mod_phx_-----'] = phxnorm
 
-    # normalize g430l/m to photometry if available, otherwise to PHX
+    # normalize g430l/m to PHX
+    if not silent: print "normalizing g430l to phoenix"
     i430 = index('sts_g430')
     spec430 = specs[i430]
-    spec430 = utils.keepranges(spec430, 3500., 10000.)
-    photometry = io.get_photometry(star, spec430['w0'][0], spec430['w1'][-1])
-    if photometry is not None:
-        tbl, band_dict = photometry
-        if len(tbl) > 3:
-            norm430 = norm2photometry(spec430, photom_tbl=tbl, band_dict=band_dict, silent=silent, plotfit=plotnorms,
-                                      clean=True)[0]
-    else:
-        if not silent: print 'Fewer than three photometry points to normalize to. Using PHX spectrum instead.'
+    spec430 = utils.keepranges(spec430, rc.normranges['hst_sts_g430l'])[:-3]  # clooge to get rid of bad last picel(s)
     norm430 = normalize(specs[iphx], spec430, safe=False, silent=silent)
     specs[i430]['flux'] *= norm430
     specs[i430]['error'] *= norm430
     specs[i430]['normac'] = norm430
+    rc.normfacs[star][db.parse_instrument(names[i430])] = norm430
 
     # trim PHX models so they aren't used to fill small gaps in UV data
     if not silent:
@@ -161,8 +157,8 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=False, silent
             print ''
             print 'splicing in {}, covering {:.1f}-{:.1f}'.format(name, *specrange)
 
+        inst = db.parse_instrument(name)
         if not rc.dontnormalize(addspec):
-            inst = db.parse_instrument(name)
             if inst in sets.weird_norm:
                 refinst = sets.weird_norm[inst]
                 if not silent:
@@ -189,15 +185,22 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=False, silent
                     # HACK: phx plot breaks things, so I'm just not doing it for now
                 if plotnorms and normfac != 1.0 and 'phx' not in name:
                     check.vetnormfacs(addspec, spec, normfac, normranges)
+
             addspec['flux'] *= normfac
             addspec['error'] *= normfac
             addspec['normfac'] = normfac
             specs[i] = addspec  # so i can use normalized specs later (lya)
-        elif not silent:
-            print '\twon\'t normalize, cuz you said not to'
+            rc.normfacs[star][inst] = normfac
+        else:
+            if 'phx' not in name and 'g430' not in name:
+                rc.normfacs[star][inst] = 1.0
+            if not silent: print '\twon\'t normalize, cuz you said not to'
 
         spec = smartsplice(spec, addspec, silent=silent)
     spec.meta['NAME'] = db.parse_name(db.panpath(star))
+    if savespecs:
+        with open(rc.normfac_file, 'w') as f:
+            json.dump(rc.normfacs, f)
 
     # replace lya portion with model or normalized stis data
     if lyaspec is None:
@@ -219,29 +222,28 @@ def panspectrum(star, R=10000.0, dw=1.0, savespecs=True, plotnorms=False, silent
     spec = splice(spec, lyaspec)
 
     # fill any remaining gaps
-    order, span = 2, 20.0
+    order, span = rc.gap_fit_order, rc.gap_fit_span
     if not silent:
         print ('filling in any gaps with an order {} polynomial fit to an '
                'area {}x the gap width'.format(order, span))
     spec = fill_gaps(spec, fill_with=order, fit_span=span, silent=silent,
                      mingapR=10.0)
 
-    # resample at constant R and dR
+    # resample at constant dw
+    dw = rc.panres
     if not silent:
-        print ('creating resampled panspecs at R = {:.0f} and dw = {:.1f} AA'
-               ''.format(R, dw))
-    Rspec = utils.powerbin(spec, R)
+        print ('creating resampled panspec at dw = {:.1f} AA'.format(dw))
     dspec = utils.evenbin(spec, dw)
 
     # save to fits
     if savespecs:
-        paths = [db.panpath(star), db.Rpanpath(star, R), db.dpanpath(star, dw)]
+        paths = [db.panpath(star), db.dpanpath(star, dw)]
         if not silent:
             print 'saving spectra to \n' + '\n\t'.join(paths)
-        for s, path in zip([spec, Rspec, dspec], paths):
+        for s, path in zip([spec, dspec], paths):
             io.writefits(s, path, overwrite=True)
 
-    return spec, Rspec, dspec
+    return spec
 
 
 def solarspec(date):
@@ -409,32 +411,26 @@ def norm2photometry(spec, photom_tbl=None, band_dict=None, silent=False, plotfit
             tbl, band_dict = photometry
     else:
         tbl = photom_tbl
-    tbl['sed_freq'] *= 1e9 # convert to Hz
 
     # convert flux to per freq.
-    wave2freq = lambda w: (const.c/w).to(u.Hz).value
-    w0, w1, flam = [spec[s] for s in ['w0', 'w1', 'flux']]
-    F = flam*(w1 - w0)
-    v0, v1 = map(wave2freq, [w0, w1])
-    fnu = F/(v0 - v1)*1e23 # Jy
-    v = (v0 + v1)/2.0
-    v = v[::-1]
-    fnu = fnu[::-1]
+    spec = utils.add_frequency(spec)
+    v = (spec['v0'] + spec['v1'])/2.0
+    fnu = spec['flux_jy']
 
     # compute synthetic phot in all bands used in table
     synphot_dict = {}
     for key, band in band_dict.items():
         wb, rb = band.T
-        vb = wave2freq(wb * u.AA)[::-1]
-        rb = rb[::-1]
-        rbi = np.interp(v, vb, rb)
+        vb = (const.c/(wb*u.AA)).to(u.Hz).value
+        rbi = np.interp(v[::-1], vb[::-1], rb[::-1])[::-1]
         synphot_dict[key] = np.trapz(rbi*fnu, v)/np.trapz(rb, vb) # Jy
 
     synphot = np.array([synphot_dict[key] for key in tbl['sed_filter']])
 
     phot = tbl['sed_flux']
     vp = tbl['sed_freq']
-    cut_prob_all_pts = 0.10
+    cut_prob_all_pts = rc.norm2phot_outlier_cut
+    outliers = tbl[0:0]
     if type(err) is not str:
         std = err
     while True:
@@ -447,8 +443,9 @@ def norm2photometry(spec, photom_tbl=None, band_dict=None, silent=False, plotfit
         # normfac = np.sum(phot*synphot) / np.sum(synphot**2)
         normsynphot = normfac*synphot
         residuals = (phot - normsynphot)/phot
+        # residuals = (phot - normsynphot)
         if err == 'adaptive':
-            std = np.std(residuals)
+            std = np.sqrt(np.mean(residuals**2))
         if clean:
             cut_prob_single_pt = 1 - (1 - cut_prob_all_pts)**(1.0/len(phot))
             cut_std = pdfutils.inv_gauss_cdf(cut_prob_single_pt)
@@ -456,8 +453,8 @@ def norm2photometry(spec, photom_tbl=None, band_dict=None, silent=False, plotfit
             if np.all(keep):
                 break
             vp, phot, synphot = vp[keep], phot[keep], synphot[keep]
-            if return_tbl_and_err:
-                tbl = tbl[keep]
+            outliers = vstack([outliers, tbl[~keep]])
+            tbl = tbl[keep]
         else:
             break
 
@@ -465,46 +462,53 @@ def norm2photometry(spec, photom_tbl=None, band_dict=None, silent=False, plotfit
         return tbl, std
 
     # normfac_err = std*normfac/np.sqrt(len(phot))
-    # normfac_err = std/np.sqrt(np.sum(synphot**2))
-    normfac_err = std/np.sqrt(S2)
+    normfac_err = std/np.sqrt(np.sum(synphot**2))
+    # normfac_err = std/np.sqrt(S2)
     synphot, synphot_err = synphot*normfac, synphot*normfac_err
     normed_residuals = (phot - synphot)/(phot*std)
+    # normed_residuals = (phot - synphot)/(std)
     if not silent:
         print "spectrum normalized by {:.2e} with a {:.1f}% uncertainty".format(normfac, 100*normfac_err/normfac)
 
-    if plotfit:
-        fig, (ax0, ax1) = plt.subplots(2, 1, sharex=True)
+    if plotfit not in [None, False]:
+        if type(plotfit) is not bool:
+            ax0, ax1 = plotfit
+        else:
+            fig, (ax0, ax1) = plt.subplots(2, 1, sharex=True)
+            ax0.set_position([0.1, 0.3, 0.85, 0.65])
+            ax1.set_position([0.1, 0.1, 0.85, 0.2])
 
         # fit
-        xlim = [0.9*min(vp), 1.1*max(vp)]
-        keep = mnp.inranges(v, xlim)
-        v, fnu = v[keep], fnu[keep]
+        wp = (const.c/vp).to(u.AA).value
+        xlim = [0.9*min(wp), 1.1*max(wp)]
+        w = (spec['w0'] + spec['w1'])/2.0
+        keep = mnp.inranges(w, xlim)
+        w, fnu = w[keep], fnu[keep]
         N = len(fnu)/1000
         if N > 1:
-            fnu = mnp.smooth(fnu, N)
-            v, fnu = v[N/2::N], fnu[::N]
-        ax0.set_position([0.1, 0.3, 0.85, 0.65])
-        ax0.plot(v, fnu*normfac, '-k')
-        ax0.fill_between(v, fnu*(normfac - normfac_err), fnu*(normfac + normfac_err), edgecolor='none', color='k',
-                         alpha='0.3')
-        ax0.plot(tbl['sed_freq'], tbl['sed_flux'], 'rx')
-        ax0.errorbar(vp, phot, std*phot, fmt='o', color='g')
-        ax0.plot(vp, synphot, 'kd')
+            fnu = mnp.smooth(fnu, N, safe=False)
+            w, fnu = w[N/2::N], fnu[::N]
+        ax0.plot(w, fnu*normfac, '-k')
+        ax0.fill_between(w, fnu*(normfac - normfac_err), fnu*(normfac + normfac_err), edgecolor='none', color='k',
+                         alpha=0.3)
+        ax0.plot((const.c/outliers['sed_freq']).to(u.AA).value, outliers['sed_flux'], 'rx')
+        ax0.errorbar(wp, phot, std*phot, fmt='.', color='g', capsize=0)
+        # ax0.errorbar(wp, phot, std, fmt='.', color='g', capsize=0)
+        ax0.plot(wp, synphot, 'k+', ms=10)
         ax0.set_yscale('log')
         ax0.set_xscale('log')
         ax0.autoscale(axis='y', tight=True)
         ylim = ax0.get_ylim()
         ax0.set_ylim(ylim[0]/1.5, ylim[1]*1.5)
         ax0.set_xlim(xlim)
-        ax1.set_xlabel('frequency [Hz]')
-        ax0.set_ylabel('flux [Jy]')
+        ax1.set_xlabel('Wavelength [$\AA$]')
+        ax0.set_ylabel('Flux [Jy]')
 
         # residuals
-        ax1.set_position([0.1, 0.1, 0.85, 0.2])
-        ax1.plot(vp, normed_residuals, 'k.')
+        ax1.plot(wp, normed_residuals, 'k.')
         ax1.grid()
         ax1.axhline(0.0, color='k')
-        ax1.set_ylabel('residuals ($\sigma$)')
+        ax1.set_ylabel('(O-C)/$\sigma$')
         ax1.set_xscale('log')
         ax1.set_xlim(xlim)
 
@@ -565,6 +569,22 @@ def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
     wr0, wr1 = [[s['w0'][0], s['w1'][-1]] for s in oboth]
     wr = [max(wr0[0], wr1[0]), min(wr0[1], wr1[1])]
 
+    # if either spectrum has zeros for errors, don't use it for any of the
+    # overlap
+    allzeroerrs = lambda spec: np.all(spec['error'] == 0.0)
+
+    # somehow the error for one of the phx entries is being changed to 0
+    # from nan, so doing allnan on the original spectrum is a workaround
+    ismodel0 = allzeroerrs(ospec0) or allzeroerrs(spec0)
+    ismodel1 = allzeroerrs(ospec1) or allzeroerrs(spec1)
+    if ismodel1 and not ismodel0:
+        return splice(spec1, spec0)
+    if ismodel0 and not ismodel1:
+        return splice(spec0, spec1)
+    if ismodel0 and ismodel1:
+        if not silent: print 'Both spectra are purely models in the overlap. Keeping the first of the two.'
+        return splice(both0[1], both0[0])
+
     # if the spectra have gaps within the overlap, split them at their gaps,
     # sort them, and splice in pairs
     gaps0, gaps1 = map(utils.gapranges, both)
@@ -584,22 +604,6 @@ def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
         spec = reduce(splice, specsb, spec)
         assert np.all(spec['w0'][1:] > spec['w0'][:-1])
         return spec
-
-    # if either spectrum has zeros for errors, don't use it for any of the
-    # overlap
-    allzeroerrs = lambda spec: np.all(spec['error'] == 0.0)
-
-    # somehow the error for one of the phx entries is being changed to 0
-    # from nan, so doing allnan on the original spectrum is a workaround
-    ismodel0 = allzeroerrs(ospec0) or allzeroerrs(spec0)
-    ismodel1 = allzeroerrs(ospec1) or allzeroerrs(spec1)
-    if ismodel1 and not ismodel0:
-        return splice(spec1, spec0)
-    if ismodel0 and not ismodel1:
-        return splice(spec0, spec1)
-    if ismodel0 and ismodel1:
-        if not silent: print 'Both spectra are purely models in the overlap. Keeping the first of the two.'
-        return splice(both0[1], both0[0])
 
     # otherwise, find the best splice locations
     # get all edges within the overlap
@@ -855,7 +859,7 @@ def phxspec(Teff, logg=4.5, FeH=0.0, aM=0.0, repo=rc.phxrepo):
     return utils.list2spectbl(data)
 
 
-def auto_phxspec(star, Teff='fit', silent=False):
+def auto_phxspec(star, Teff='oldfit', silent=False):
     kwds = {}
     for key in ['logg', 'FeH', 'aM']:
         val = rc.starprops[key][star]
@@ -910,6 +914,10 @@ def auto_phxspec(star, Teff='fit', silent=False):
         Teff = Tlit
         T0 = Tlit - Tlit_err
         T1 = Tlit + Tlit_err
+    if Teff == 'oldfit':
+        Teff = rc.starprops['Teff_muscles'][star]
+        T0 = Teff - rc.starprops.errneg['Teff_muscles'][star]
+        T1 = Teff + rc.starprops.errpos['Teff_muscles'][star]
     if not silent:
         print 'interpolating phoenix spectrum for {} with values'.format(star)
         print "Teff = {}".format(Teff), kwds

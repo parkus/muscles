@@ -36,10 +36,10 @@ def fancyBin(spec, maxpow=30000, mindw=None):
         _, ends = mnp.block_edges(insti)
         split = ends[0]
         piece = spec[:split]
+        spec = spec[split:]
         if len(piece) <= 2:
             pieces.append(piece)
             continue
-        spec = spec[split:]
         w = (piece['w0'] + piece['w1']) / 2.0
         dw = (piece['w1'] - piece['w0'])
         if mindw is None:
@@ -53,10 +53,19 @@ def fancyBin(spec, maxpow=30000, mindw=None):
     return vstack(pieces)
 
 
-def bolo_integral(star):
+def bolo_integral(star_or_panspec):
     """Compute the integral of all flux for the star."""
+    if star_or_panspec == 'sun':
+        return rc.insolation
 
-    pan = io.read(db.panpath(star))[0]
+    if type(star_or_panspec) is str:
+        star = star_or_panspec
+        pan = io.read(db.panpath(star))[0]
+    else:
+        pan = star_or_panspec
+        star = pan.meta['STAR']
+    if star == 'sun':
+        return rc.insolation
     fit_unnormed = blackbody_fit(star)
     normfac = pan[-1]['normfac']
 
@@ -93,10 +102,27 @@ def bol2sol(a):
 def add_normflux(spectbl):
     """Add columns to the spectbl that are the bolometric-normalized flux and
     associated error."""
-    normfac = bolo_integral(spectbl.meta['STAR'])
+    if 'pan' in spectbl.meta['NAME']:
+        normfac = bolo_integral(spectbl)
+    else:
+        normfac = bolo_integral(spectbl.meta['STAR'])
     spectbl['normflux'] = spectbl['flux']/normfac
     spectbl['normerr'] = spectbl['error']/normfac
     return spectbl
+
+
+def add_frequency(spectbl):
+    """Add columns to the spetbl for the frequency and flux in Jy."""
+    wave2freq = lambda w: (const.c/w).to(u.Hz).value
+    w0, w1, flam = [spectbl[s] for s in ['w0', 'w1', 'flux']]
+    F = flam*(w1 - w0)
+    v0, v1 = map(wave2freq, [w0, w1])
+    fnu = F/(v0 - v1)*1e23 # Jy
+    spectbl['v0'] = v0
+    spectbl['v1'] = v1
+    spectbl['flux_jy'] = fnu
+    return spectbl
+
 
 def isechelle(str_or_spectbl):
     if type(str_or_spectbl) is str:
@@ -479,6 +505,11 @@ def rebin(spec, newbins):
 
 
 def evenbin(spectbl, dw, lo=None, hi=None, keep_remainder=False):
+    if hasgaps(spectbl):
+        pieces = gapsplit(spectbl)
+        newpieces = [evenbin(piece, dw, lo, hi, keep_remainder) for piece in pieces]
+        return vstack(newpieces)
+
     if lo is None: lo = np.min(spectbl['w0'])
     if hi is None: hi = np.max(spectbl['w1'])
     we = np.arange(lo, hi+dw, dw)
@@ -495,6 +526,11 @@ def powerbin(spectbl, R=1000.0, lo=None, hi=None, keep_remainder=False):
     original wavelength range, a fractional bin at the end of the range will be discarded. Otherwise it can be set to
     fat or skinny to specify whether the fraction bin should be combined with the previous or kept as a fractional bin.
     """
+    if hasgaps(spectbl):
+        pieces = gapsplit(spectbl)
+        newpieces = [evenbin(piece, R, lo, hi, keep_remainder) for piece in pieces]
+        return vstack(newpieces)
+
     start = spectbl['w0'][0]
     if lo is None and start == 0:
         start = 1.0
@@ -590,7 +626,7 @@ def blackbody_fit(star):
         temp, = argrelmax(phx['flux'][keep])
         keep = keep[temp]
 
-    Teff = rc.starprops['Teff'][star]
+    Teff = rc.starprops['Teff_muscles'][star]
     efac = const.h * const.c / const.k_B / (Teff * u.K)
     efac  = efac.to(u.angstrom).value
     w = (phx['w0'] + phx['w1']) / 2.0

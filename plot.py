@@ -159,24 +159,30 @@ def specstep(spectbl, *args, **kwargs):
     autolabel = kwargs.pop('autolabel', True)
 
     #parse data from table
-    w0, w1, f, e = np.array([spectbl[s] for s in ['w0','w1', key, 'error']])
+    w0, w1, f = np.array([spectbl[s] for s in ['w0','w1', key]])
 
     wbins = np.array([w0, w1]).T
 
     #plot flux
-    fplt = specplot(wbins, f, *args, **kwargs)
     if autolabel:
         ax.set_xlabel('Wavelength [$\AA$]')
         ax.set_ylabel(ylbl)
 
     #plot error
-    if err:
+    if err != False:
+        e = spectbl['error'] if key == 'flux' else spectbl[key + '_err']
+
+    if err in [True, 'line']:
+        fplt = specplot(wbins, f, *args, **kwargs)
+        if 'color' not in kwargs: kwargs['color'] = fplt.get_color()
 #        if 'alpha' not in kwargs: kwargs['alpha'] = 0.4
         kwargs['ls'] = ':'
-        if 'color' not in kwargs: kwargs['color'] = fplt.get_color()
         eplt = specplot(wbins, e, *args, **kwargs)
         return fplt, eplt
+    elif err == 'poly':
+        specplot(wbins, f, err=e, *args, **kwargs)
     else:
+        fplt = specplot(wbins, f, *args, **kwargs)
         return fplt
 
 

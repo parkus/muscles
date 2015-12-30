@@ -28,17 +28,21 @@ def plotnorm(spec_or_star, ax=plt.gca(), clip=1e-10):
     plot.specstep(spec, ax=ax)
 
 
-def spectralAnatomy(ax=plt.gca(), star='gj832', scale_fac=100.):
+def spectralAnatomy(ax=plt.gca(), star='gj832', scale_fac=100., shortlabels=False):
     """Takes a set of two vertically stacked axes and plots some info. Adjusting the plot spacing is up to the user."""
-
-    ax.set_xscale('log')
-    ax.autoscale(axis='x', tight=True)
 
     # make plot of full spectrum
     spec = io.read(db.panpath(star))[0]
     spec_rebin = utils.fancyBin(spec, maxpow=30000)
     ymax = np.max(spec_rebin['flux'][spec_rebin['w1'] > 3000.])
+    ax.set_xscale('log')
     (ax0, line0), (ax1, line1) = splitSpec(spec_rebin, ax=ax, wsplit=3000., scale_fac=scale_fac)
+
+    xlim = 5.0, 55000.
+    ax0.set_xscale('log')
+    ax1.set_xscale('log')
+    ax0.set_xlim(xlim)
+    ax1.set_xlim(xlim)
 
     # add instrument ranges to the top plot
     txt_offset_frac = 0.25
@@ -68,8 +72,9 @@ def spectralAnatomy(ax=plt.gca(), star='gj832', scale_fac=100.):
     # now add the bars
     insts = ['xobs', 'apec', 'euv', 'hst', 'phx']
     rngs = [rc.instranges[key] for key in insts]
-    labels = [rc.instnames[key] for key in insts]
-    [rangebar(ax0, r, l) for r,l in zip(rngs, labels)]
+    instnames = rc.instabbrevs if shortlabels else rc.instnames
+    labels = [instnames[key] for key in insts]
+    [rangebar(ylim*0.9, r, l, ax=ax1, lbl_offset=ylim*0.02) for r,l in zip(rngs, labels)]
 
     # annotate lya model and Mg II lines
     def vtxt(w, label):
@@ -81,6 +86,8 @@ def spectralAnatomy(ax=plt.gca(), star='gj832', scale_fac=100.):
     ax1.set_ylabel(fluxlabel)
 
     ax0.set_xlabel('Wavelength [$\AA$]')
+
+    plt.draw()
 
     # ax_bot.set_xlabel('Wavelength [$\AA$]')
     #
@@ -671,9 +678,14 @@ def phxFit(star='gj832', ax=None):
     ax.legend((pline, xline), ('$HST$ Data', 'PHONEIX Model'), loc='lower right')
 
 
-def rangebar(y, rng, label, ax=plt.gca(), styles=['|-|', '<->']):
+def rangebar(y, rng, label, ax=plt.gca(), styles=['|-|', '<->'], labelpos='above', txt_kwds={}, lbl_offset=0.0):
     for style in styles:
-        ax.annotate('', xy=(rng[1],y), xytext=(rng[0],y), arrowprops={'arrowstyle':style})
+        ax.annotate('', xy=(rng[1],y), xytext=(rng[0],y), arrowprops={'arrowstyle':style, 'shrinkA':0, 'shrinkB':0})
 
     mid = np.sqrt(rng[0]*rng[1]) if ax.get_xscale() == 'log' else sum(rng)/2.0
-    ax.text(mid, y, label + '\n', va='center', ha='center')
+    if labelpos == 'above':
+        ax.text(mid, y + lbl_offset, label, va='bottom', ha='center', **txt_kwds)
+    elif labelpos == 'center':
+        ax.text(mid, y + lbl_offset, label, va='center', ha='center', bbox=dict(fc='w', ec='w'), **txt_kwds)
+    else:
+        raise Exception("Didn't understand label position.")

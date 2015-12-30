@@ -121,11 +121,10 @@ def allsourcefiles(star):
     return choosesourcespecs(allfiles)
 
 
-def panfiles(star):
+def panfiles(star, config):
     """Return the files for the spectra to be spliced into a panspectrum,
     replacing "raw" files with coadds and custom extractions as appropriate
     and ordering according to how the spectra should be normalized."""
-    # FIXME: not replacing coadds properly for eps eri
 
     allfiles = allsourcefiles(star)
     use = lambda name: any([s in name for s in rc.instruments])
@@ -308,24 +307,29 @@ def flarepath(star, inst, label):
     return os.path.join(rc.flaredir, name + '.fits')
 
 
-def hlsppath(name):
+def hlsppath(name_or_star):
 
-    star = parse_star(name)
-
-    if 'panspec' in name:
-        tel = 'multi'
-        inst = 'multi'
-        filt = 'broadband'
-        if 'native' in name:
-            product = 'var-res-sed'
-        elif 'constant_dR' in name:
-            product = 'const-res-sed'
+    if '_' not in name_or_star:
+        star = name_or_star
+        tel, inst, filt = 'multi', 'multi', 'broadband'
+        product = 'var-res-sed'
     else:
-        tel, inst, filt = parse_instrument(name).split('_')
-        tel = rc.HLSPtelescopes[tel].lower()
-        inst = rc.HLSPinstruments[inst].lower()
-        filt = rc.HLSPgratings[filt].lower()
-        product = 'component-spec'
+        name = name_or_star
+        star = parse_star(name)
+        if 'panspec' in name:
+            tel = 'multi'
+            inst = 'multi'
+            filt = 'broadband'
+            if 'native' in name:
+                product = 'var-res-sed'
+            elif 'constant_dR' in name:
+                product = 'const-res-sed'
+        else:
+            tel, inst, filt = parse_instrument(name).split('_')
+            tel = rc.HLSPtelescopes[tel].lower()
+            inst = rc.HLSPinstruments[inst].lower()
+            filt = rc.HLSPgratings[filt].lower()
+            product = 'component-spec'
 
     if inst == 'polynomial-fit':
         return 'polynomial fits not separately saved'

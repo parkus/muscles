@@ -15,7 +15,7 @@ from astropy.io import fits
 from pandas import read_json
 import scicatalog.scicatalog as sc
 
-version = '00'
+version = '01'
 
 # new mac
 gdrive = '/Users/rolo7566/Google Drive'
@@ -35,6 +35,7 @@ moviepath = productspath + '/movies'
 filterpath = '/Users/rolo7566/Datasets/shared/filter response curves'
 sharepath = root +'/share'
 xsectionpath = local + '/xsections'
+normfac_file = local + '/normfac_log.json'
 
 starprops = sc.SciCatalog(proppath, readOnly=True, silent=True)
 contbandpath = sharepath + '/continuum_bands.csv'
@@ -56,6 +57,9 @@ stdbandpath = root + '/settings/stdbands.json'
 stars = list(starprops.values.sort('Teff_muscles').index)
 observed = [star for star in stars if starprops['observed'][star]]
 hosts = [star for star in stars if starprops['host'][star]]
+
+with open(normfac_file) as f:
+    normfacs = json.load(f)
 
 insolation = 1363100. # cgs
 
@@ -192,10 +196,16 @@ spectbl_format =  {'units' : ['Angstrom']*2 + ['erg/s/cm2/Angstrom']*2 + ['s',''
 stdbands = read_json(stdbandpath)
 
 # prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m', 'sts_g430l', 'sts_g430m', 'mod_apc']
-prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m', 'cos_g230l', 'sts_g430l', 'sts_g430m', 'mod_phx',
+prenormed = ['mod_lya', 'mod_euv', 'sts_g430l', 'cos_g130m', 'cos_g160m', 'cos_g230l', 'sts_g430m', 'mod_phx',
              'mod_apc']
+normranges = {'hst_sts_g430l':[3500.,10000.]}
 
 lyacut = [1209.5, 1222.0]
+panres = 1.0
+norm2phot_outlier_cut = 0.1
+teff_system_err = 100
+gap_fit_order = 2
+gap_fit_span = 20.
 
 flare_bands = {#'hst_cos_g130m' : [[1169.5 , 1198.5 ], [1201.7 , 1212.17], [1219.17, 1271.19], [1324.83, 1426.08]],
                #'hst_cos_g130m' : [[1324.83, 1426.08]],
@@ -205,12 +215,10 @@ flare_bands = {#'hst_cos_g130m' : [[1169.5 , 1198.5 ], [1201.7 , 1212.17], [1219
 specstrings = ['x1d', 'mod_euv', 'mod_lya', 'spec', 'sx1', 'mod_phx', 'coadd']
 
 #listed in normalization order
-# instruments = ['hst_cos_g130m','hst_cos_g160m','hst_sts_g430l','hst_sts_g430m','hst_sts_g140m','hst_sts_e230m',
-#                'hst_sts_e230h','hst_sts_g230l','hst_cos_g230l','hst_sts_e140m','mod_gap_fill-','mod_euv_-----',
-#                'xmm_epc_multi','xmm_epc_pn---','cxo_', 'mod_phx_-----','mod_lya_young','mod_euv_young', 'mod_apc_-----']
 instruments = ['hst_cos_g130m','hst_cos_g160m','hst_cos_g230l','hst_sts_g140m','hst_sts_e140m','hst_sts_e230m',
-               'hst_sts_e230h','hst_sts_g230l','hst_sts_g430l','hst_sts_g430m','mod_gap_fill-','mod_euv_-----',
-               'xmm_epc_multi','xmm_epc_pn---','cxo_', 'mod_phx_-----','mod_lya_young','mod_euv_young', 'mod_apc_-----']
+               'hst_sts_e230h','hst_sts_g230l','hst_sts_g430l','hst_sts_g430m','mod_gap_fill-',
+               'xmm_epc_multi','xmm_epc_pn---','cxo_---_-----', 'mod_euv_young', 'mod_apc_-----',
+               'mod_lya_young', 'mod_phx_-----', 'oth_---_other']
 instvals = [2**i for i in range(len(instruments))]
 
 # for use in making plots
@@ -224,14 +232,15 @@ instnames = {'xobs': 'XMM or Chandra', 'xmm': 'XMM', 'cxo': 'Chandra', 'euv': 'E
              'c230l': 'HST COS G230L', 's140m': 'HST STIS E140M', 's230m': 'HST STIS E230M',
              's230h': 'HST STIS E230H', 's230l': 'HST STIS G230L', 's430m': 'HST STIS G430M',
              's430l': 'HST STIS G430L'}
+instabbrevs = {'xobs':'XMM or Chandra', 'apec':'APEC', 'euv':'Empirical EUV Estimate', 'hst':'HST', 'phx':'PHOENIX'}
 
 # for use in making FITS headers
-HLSPtelescopes = {'hst':'HST', 'cxo':'CXO', 'xmm':'XMM', 'mod':'MODEL'}
+HLSPtelescopes = {'hst':'HST', 'cxo':'CXO', 'xmm':'XMM', 'mod':'MODEL', 'oth':'OTHER'}
 HLSPinstruments = {'cos':'COS', 'sts':'STIS', 'euv':'EUV-SCALING', 'lya':'LYA-RECONSTRUCTION', 'phx':'PHX',
-                   'epc':'EPIC', 'gap':'POLYNOMIAL-FIT', 'apc':'APEC'}
+                   'epc':'EPIC', 'gap':'POLYNOMIAL-FIT', 'apc':'APEC', '---':'NA'}
 HLSPgratings = {'g130m':'G130M', 'g160m':'G160M', 'g430l':'G430L', 'g430m':'G430M', 'g140m':'G140M', 'e230m':'E230M',
                 'e230h':'E230H', 'g230l':'G230L', 'e140m':'E140M', 'fill-':'NA', '-----':'NA', 'young':'NA',
-                'pn---':'PN', 'multi':'MULTI'}
+                'pn---':'PN', 'multi':'MULTI', 'other':'NA'}
 
 
 def getinststr(inst_val):
