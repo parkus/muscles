@@ -13,9 +13,9 @@ from scipy.io import readsav as spreadsav
 import rc, utils, db
 import astropy.table as table
 from astropy.time import Time
-import astropy.constants as const
 import astropy.units as u
 from warnings import warn
+import json
 
 legendcomment = ('This extension is a legend for the integer identifiers in the instrument column of the '
                   'spectrum extension. Instruments are identified by bitwise flags so that any combination of '
@@ -60,6 +60,8 @@ def readpans(star):
 
 
 def readpan(star):
+    if star == 'sun':
+        return read_solar()
     return read(db.panpath(star))[0]
 
 
@@ -138,15 +140,22 @@ def readstdfits(specfile):
     except KeyError:
         spectbl.meta['SOURCESPECS'] = []
 
-    if 'hst' in specfile:
+    if 'hst' in specfile and 'hlsp' not in specfile:
         spectbl = __trimHSTtbl(spectbl)
 
-    spectbl = utils.conform_spectbl(spectbl)
+    if 'hlsp' in specfile:
+        for col in spectbl.colnames:
+            spectbl.rename_column(col, col.lower())
+        spectbl.rename_column('wavelength0', 'w0')
+        spectbl.rename_column('wavelength1', 'w1')
+    else:
+        spectbl = utils.conform_spectbl(spectbl)
 
     if 'phx' in specfile:
         spectbl['flux'].unit = ''
 
     return spectbl
+
 
 def readfits(specfile):
     """Read a fits file into standardized table."""
@@ -154,7 +163,7 @@ def readfits(specfile):
     observatory = db.parse_observatory(specfile)
 
     spec = fits.open(specfile)
-    if any([s in specfile for s in ['coadd', 'custom', 'mod', 'panspec']]):
+    if any([s in specfile for s in ['coadd', 'custom', 'mod', 'panspec', 'other', 'hlsp']]):
         return [readstdfits(specfile)]
     elif observatory == 'hst':
         sd, sh = spec[1].data, spec[1].header
@@ -175,7 +184,7 @@ def readfits(specfile):
         #cull off-detector data
         spectbls = [__trimHSTtbl(spectbl) for spectbl in spectbls]
 
-    elif observatory == 'xmm':
+    elif observatory in ['xmm', 'cxo']:
         sh = spec[0].header
         star = db.parse_star(specfile)
 
@@ -195,7 +204,7 @@ def readfits(specfile):
             expt = sh['spec_exptime_pn'] * 1000.0
             start = Time(sh['pn_date-obs']).mjd
             end = Time(sh['pn_date-end']).mjd
-        if optel == 'multi':
+        elif optel == 'multi':
             expt = (sh['spec_exptime_mos1'] + sh['spec_exptime_mos2'] + sh['spec_exptime_pn']) / 3.0 * 1000.0
             start1 = Time(sh['mos1_date-obs']).mjd
             start2 = Time(sh['mos2_date-obs']).mjd
@@ -205,12 +214,19 @@ def readfits(specfile):
             end3 = Time(sh['pn_date-end']).mjd
             start = min([start1, start2, start3])
             end = max([end1, end2, end3])
+        else:
+            start = 0.0
+            end = 0.0
+            expt = 0.0
         flux, err = [spec[1].data[s] for s in ['CFlux', 'CFlux_err']]
         w0, w1 = groomwave(1)
         insti = db.getinsti(specfile)
         obsspec = utils.vecs2spectbl(w0, w1, flux, err, expt, instrument=insti, start=start, end=end, star=star,
                                      filename=specfile)
+        good = np.isfinite(obsspec['flux'])
+        obsspec = obsspec[good]
 
+        # next the model
         flux = spec[2].data['Flux']
         expt, err = 0.0, 0.0
         w0, w1 = groomwave(2)
@@ -251,7 +267,8 @@ def readtxt(specfile):
 
         inst = db.getinsti(specfile)
         spectbl = utils.vecs2spectbl(w0, w1, f, e, instrument=inst, filename=specfile)
-        spectbl = utils.evenbin(spectbl, 1.0)
+        if 'euv' in specfile:
+            spectbl = utils.evenbin(spectbl, 1.0)
         return [spectbl]
     else:
         raise Exception('A parser for {} files has not been implemented.'.format(specfile[2:9]))
@@ -474,7 +491,7 @@ def write_simple_ascii(spectbl, name, key='flux', overwrite=False):
     data = np.array([wmid, f]).T
     np.savetxt(name, data)
 
-def writehlsp(star_or_spectbl, components=True, overwrite=False):
+def writehlsp(star_or_spectbl, components=True):
     """
     Writes spectbl to a standardized MUSCLES FITS file format that also
     includes all the keywords required for the archive.
@@ -497,9 +514,9 @@ def writehlsp(star_or_spectbl, components=True, overwrite=False):
         star = star_or_spectbl
         pfs = db.allpans(star)
         pan = read(filter(lambda s: 'native_resolution' in s, pfs))[0]
-        writehlsp(pan, overwrite=overwrite)
+        writehlsp(pan)
         dpan = read(filter(lambda s: 'dR=' in s, pfs))[0]
-        writehlsp(dpan, components=False, overwrite=overwrite)
+        writehlsp(dpan, components=False)
         return
     else:
         spectbl = star_or_spectbl
@@ -600,10 +617,25 @@ def writehlsp(star_or_spectbl, components=True, overwrite=False):
             prihdr['EXPTIME'] = expmed
             prihdr['EXPDEFN'] = 'MEDIAN'
             prihdr['EXPMAX'] = np.max(expt)
-            prihdr['EXPMIN'] = np.min(expt[expt > 1])
+            prihdr['EXPMIN'] = np.min(expt[expt > 0])
             prihdr['EXPMED'] = expmed
         else:
             prihdr['EXPTIME'] = expt[0]
+
+    if not (pan or mod) or 'phx' in name:
+        try:
+            inst = db.parse_instrument(name)
+            normfac = rc.normfacs[star][inst]
+            panspec = readpan(star)
+            insti = rc.getinsti(inst)
+            assert insti == spectbl['instrument'][0]
+            normfac_vec = panspec['normfac'][panspec['normfac'] == insti]
+            if len(normfac_vec) > 0:
+                assert np.isclose(normfac_vec, normfac)
+        except KeyError:
+            normfac = 1.0
+        prihdr['normfac'] = (normfac, 'normalization factor used by MUSCLES')
+
 
     prihdr['WAVEMIN'] = w[0]
     prihdr['WAVEMAX'] = w[-1]
@@ -645,11 +677,11 @@ def writehlsp(star_or_spectbl, components=True, overwrite=False):
         fmts.extend(['E']*2 + ['I'] + ['D']*2)
 
     if pan:
-            # add a normalized flux column
+        # add a normalized flux column
         spectbl = utils.add_normflux(spectbl)
-        spectbl['normflux'].unit['Angstrom-1']
-        spectbl['normerr'].unit['Angstrom-1']
-        spechdr['BOLOFLUX'] = utils.bolo_integral(spectbl.meta['STAR'])
+        spectbl['normflux'].unit = 'Angstrom-1'
+        spectbl['normerr'].unit = 'Angstrom-1'
+        prihdr['BOLOFLUX'] = utils.bolo_integral(spectbl.meta['STAR'])
 
         cols.extend(['instrument', 'normfac', 'normflux', 'normerr'])
         descriptions.extend(['bitmask identifying the source instrument(s). See "instlgnd" extension for a legend.',
@@ -714,7 +746,7 @@ def writehlsp(star_or_spectbl, components=True, overwrite=False):
                     continue
                 assert len(spec) == 1
                 spec = spec[0]
-                writehlsp(spec, overwrite=overwrite)
+                writehlsp(spec)
 
     # SOURCE SPECTRA LIST
     if 'hst' in name:
@@ -756,19 +788,27 @@ def writehlsp(star_or_spectbl, components=True, overwrite=False):
         hdus.append(srchdu)
 
     hdus = fits.HDUList(hdus)
-    hdus.writeto(hlspname, clobber=overwrite)
+    hdus.writeto(hlspname, clobber=True)
 
 
-def read_xsections(species):
-    data = np.loadtxt(path.join(rc.xsectionpath, species.upper()))
+def read_xsections(species, dissoc_only=True):
+    name = path.join(rc.xsectionpath, species.upper())
+    with open(name) as f:
+        ionlim = float(f.readline())*10.0 # Å
+        data = np.loadtxt(f)
     names = ['w', 'x', 'dx/dT']
     Nbranches = (data.shape[1] - 3)/2
     for i in range(Nbranches):
         names.extend(['y_{}'.format(i), 'dy/dT_{}'.format(i)])
     tbl = table.Table(data=data, names=names)
     tbl.meta['Nbranches'] = Nbranches
+    tbl.meta['ion_limit'] = ionlim
 
-    tbl['w'] *= 10
+    tbl['w'] *= 10 # nm to Å
+
+    if dissoc_only:
+        keep = tbl['w'] > ionlim
+        tbl = tbl[keep]
 
     if species == 'H2O':
         logx = np.log10(tbl['x'][-2:])
@@ -782,4 +822,24 @@ def read_xsections(species):
         tbl = table.vstack([tbl, newtbl])
 
     return tbl
+
+
+_si2cgs_flux = lambda x: (x * u.W / u.m**2 / u.nm).to(u.erg/u.s/u.AA/u.cm**2)
+
+
+def read_solar(period='active bright'):
+    filename = path.join(rc.solarpath, 'WHI_reference_spectra.dat')
+    data = np.loadtxt(filename, skiprows=142)
+    w0, fluxes = data[:,0], data[:,1:4].T
+    w1 = w0 + 0.1
+    w0, w1 = 10*w0*u.AA, 10*w1*u.AA
+
+    periods = ['active dark', 'active bright', 'quiet']
+    flux = fluxes[periods.index(period)]
+    flux = _si2cgs_flux(flux)
+
+    flux_units = u.erg / u.s / u.cm**2 / u.AA
+    name = 'p_multi_-_-_sun_{}_spectrum'.format(period.replace(' ', '_'))
+    spectbl = utils.vecs2spectbl(w0, w1, flux, star='sun', name=name, filename=filename)
+    return spectbl
 
