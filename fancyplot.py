@@ -31,14 +31,12 @@ def plotnorm(spec_or_star, ax=plt.gca(), clip=1e-10):
 def spectralAnatomy(ax=plt.gca(), star='gj832', scale_fac=100., shortlabels=False):
     """Takes a set of two vertically stacked axes and plots some info. Adjusting the plot spacing is up to the user."""
 
-    wsplit = 3000.
-
     # make plot of full spectrum
     spec = io.read(db.panpath(star))[0]
     spec_rebin = utils.fancyBin(spec, maxpow=30000)
     ymax = np.max(spec_rebin['flux'][spec_rebin['w1'] > 3000.])
     ax.set_xscale('log')
-    (ax0, line0), (ax1, line1) = splitSpec(spec_rebin, ax=ax, wsplit=wsplit, scale_fac=scale_fac)
+    (ax0, line0), (ax1, line1) = splitSpec(spec_rebin, ax=ax, wsplit=3000., scale_fac=scale_fac)
 
     xlim = 5.0, 55000.
     ax0.set_xscale('log')
@@ -67,8 +65,8 @@ def spectralAnatomy(ax=plt.gca(), star='gj832', scale_fac=100., shortlabels=Fals
 
     # now add the bars for the instruments of note
     # coordinate crap
-    # h_txt_data = h_txt_pts * pts2datay
-    # y_bar_data = y_bar_ax * ax0.get_ylim()[1]
+    h_txt_data = h_txt_pts * pts2datay
+    y_bar_data = y_bar_ax * ax0.get_ylim()[1]
     # y_txt_data = y_bar_data + 0.05 * ylim/scale_fac
 
     # now add the bars
@@ -76,9 +74,7 @@ def spectralAnatomy(ax=plt.gca(), star='gj832', scale_fac=100., shortlabels=Fals
     rngs = [rc.instranges[key] for key in insts]
     instnames = rc.instabbrevs if shortlabels else rc.instnames
     labels = [instnames[key] for key in insts]
-    for r, l in zip(rngs, labels):
-        ax = ax0 if r[0] < wsplit else ax1
-        rangebar(ylim*0.9, r, l, ax=ax1, lbl_offset=ylim*0.02)
+    [rangebar(ylim*0.9, r, l, ax=ax1, lbl_offset=ylim*0.02) for r,l in zip(rngs, labels)]
 
     # annotate lya model and Mg II lines
     def vtxt(w, label):
@@ -136,26 +132,7 @@ def spectralAnatomy(ax=plt.gca(), star='gj832', scale_fac=100., shortlabels=Fals
 def splitSpec(spec, ax=None, wsplit=3000., scale_fac=50.):
     ax1 = plt.gca() if ax is None else ax
 
-    # compute gap in data coordinates
-    xlim = ax1.get_xlim()
-    x0_old, x1_old = np.log10(xlim)
-    dx_old = x1_old - x0_old
-    gap_norm = 0.05
-    dx_new = dx_old/(1- gap_norm)
-    x0, x1 = xlim[0], xlim[0] + dx_new
-
-    # resize first axis appropriately
-    p1 = ax1.get_position()
-    xf0, xf1, wf, yf0, hf = p1.x0, p1.x1, p1.width, p1.y0, p1.height
-    wf1 = (np.log10(wsplit) - x0)/dx_new * wf
-    ax1.set_position([xf0, yf0, wf1, hf])
-
-    # create second axis
-    fig = ax1.get_figure()
-    wf2 = wf - wf1 - gap_norm
-    ax2 = fig.add_axes([xf0 + wf1 + gap_norm, yf0, wf2, hf])
-
-    # plot the specs on the appropriate axes
+    ax2 = ax1.twinx()
     leftspec = utils.keepranges(spec, 0.0, wsplit)
     rightspec = utils.keepranges(spec, wsplit, np.inf)
     step = lambda spec, ax: plot.specstep(spec, err=False, ax=ax, color='k', autolabel=False)
@@ -164,9 +141,7 @@ def splitSpec(spec, ax=None, wsplit=3000., scale_fac=50.):
     ax2.set_ylim(0.0, None)
     ax1.set_ylim(0.0, ax2.get_ylim()[1] / scale_fac)
 
-    ax1.set_xlim(10**x0, wsplit)
-    ax2.set_xlim(wsplit, 10**x1_old)
-    ax2.set_yticklabels([])
+    ax1.axvline(wsplit, ls=':')
 
     return (ax1, leftline), (ax2, rightline)
 
