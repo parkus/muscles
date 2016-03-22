@@ -14,7 +14,6 @@ import reduce as red
 from plot import specstep
 import numpy as np
 from os import path
-from spectralPhoton import image
 from math import ceil, floor
 import mypy.my_numpy as mnp
 from mypy.specutils import plot as specplot

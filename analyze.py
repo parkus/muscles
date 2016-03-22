@@ -50,13 +50,22 @@ def fuv_cont_stats(star):
     pan = io.readpan(star)
     cont = utils.keepranges(pan, rc.contbands, ends='exact')
     dw = cont['w1'] - cont['w0']
-    Fcont_avg = np.sum(cont['flux'] * dw)/np.sum(dw)
-    Fcont_avg_err = mnp.quadsum(cont['error'] * dw)/np.sum(dw)
-    dw_fuv = rc.fuv[1] - rc.fuv[0]
-    Fall_FUV, Fall_FUV_err = utils.flux_integral(pan, *rc.fuv)
-    ratio = Fcont_avg * dw_fuv / Fall_FUV
-    ratio_err = abs(ratio)*np.sqrt((Fall_FUV_err/Fall_FUV)**2 + (Fcont_avg_err/Fcont_avg)**2)
-    return Fcont_avg, Fcont_avg_err, ratio, ratio_err
+
+    # assume flat continuum
+    # Fcont_avg = np.sum(cont['flux'] * dw)/np.sum(dw)
+    # Fcont_avg_err = mnp.quadsum(cont['error'] * dw)/np.sum(dw)
+    # dw_fuv = rc.fuv[1] - rc.fuv[0]
+    # Fall_FUV, Fall_FUV_err = utils.flux_integral(pan, *rc.fuv)
+    # ratio = Fcont_avg * dw_fuv / Fall_FUV
+    # ratio_err = abs(ratio)*np.sqrt((Fall_FUV_err/Fall_FUV)**2 + (Fcont_avg_err/Fcont_avg)**2)
+
+    # just do continuum actual measured, ignore "in-between" continuumFcont_avg
+    Fcont  = np.sum(cont['flux'] * dw)
+    Fcont_err = mnp.quadsum(cont['error'] * dw)
+    Fall_FUV, Fall_FUV_err = utils.flux_integral(pan, cont['w0'][0], cont['w1'][-1])
+    ratio = Fcont / Fall_FUV
+    ratio_err = abs(ratio)*np.sqrt((Fall_FUV_err/Fall_FUV)**2 + (Fcont_err/Fcont)**2)
+    return Fcont, Fcont_err, ratio, ratio_err
 
 
 def dissoc_spec(star_or_spec, species_list, dissoc_only=True):
@@ -73,13 +82,12 @@ def dissoc_spec(star_or_spec, species_list, dissoc_only=True):
     result = []
     for species in species_list:
         xtbl = io.read_xsections(species, dissoc_only=dissoc_only)
-        minipan = utils.keepranges(spec, xtbl['w'][0] - 10., xtbl['w'][-1] + 10.)
-        w0, w1 = utils.wbins(minipan).T
+        w0, w1 = utils.wbins(spec).T
 
         w = (w0 + w1) / 2.0
         xsum = sumdissoc(xtbl)
         xsumi = np.interp(w, xtbl['w'], xsum, np.nan, np.nan)
-        xspec_bolo = minipan['flux_photon'] * xsumi / bolo
+        xspec_bolo = spec['flux_photon'] * xsumi / bolo
 
         dw = w1 - w0
         dissoc_bolo = np.nansum(dw * xspec_bolo) # cm2 erg-1
@@ -90,6 +98,27 @@ def dissoc_spec(star_or_spec, species_list, dissoc_only=True):
         result.append([dtbl, dissoc_bolo])
 
     return result
+
+
+def cum_dissoc_spec(star_or_spec, species, dissoc_only=True, normed=True):
+    dspec = dissoc_spec(star_or_spec, species, dissoc_only=dissoc_only)[0][0]
+    dw = dspec['w1'] - dspec['w0']
+    temp = dspec['diss'].copy()
+    temp[np.isnan(temp)] = 0.0
+    cumspec = np.cumsum(temp * dw) * rc.insolation
+    cumspec = np.insert(cumspec, 0, 0.0)
+    if normed:
+        cumspec /= cumspec[-1]
+    return cumspec
+
+
+def dissoc_ratio(spec, species, band1, band2, dissoc_only=True):
+    """Returns ratio of dissociations due to flux in band1 over flux in band2."""
+    cspec = cum_dissoc_spec(spec, species, dissoc_only=dissoc_only)
+    we = utils.wedges(spec)
+    integral = lambda band: np.diff(np.interp(band, we, cspec))
+    I1, I2 = map(integral, [band1, band2])
+    return I1/I2
 
 
 def sumdissoc(xtbl):

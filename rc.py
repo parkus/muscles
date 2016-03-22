@@ -15,7 +15,7 @@ from astropy.io import fits
 from pandas import read_json
 import scicatalog.scicatalog as sc
 
-version = '01'
+version = '10'
 
 # new mac
 gdrive = '/Users/rolo7566/Google Drive'
@@ -36,6 +36,7 @@ filterpath = '/Users/rolo7566/Datasets/shared/filter response curves'
 sharepath = root +'/share'
 xsectionpath = local + '/xsections'
 normfac_file = local + '/normfac_log.json'
+photref_file = photometrypath + '/photometry_refs.json'
 
 starprops = sc.SciCatalog(proppath, readOnly=True, silent=True)
 contbandpath = sharepath + '/continuum_bands.csv'
@@ -61,7 +62,7 @@ hosts = [star for star in stars if starprops['host'][star]]
 with open(normfac_file) as f:
     normfacs = json.load(f)
 
-insolation = 1363100. # cgs
+insolation = 1361000. # cgs
 
 # -----------------------------------------------------------------------------
 # STANDARD BANDS
@@ -73,6 +74,9 @@ fuv = [911, 1700]
 nuv = [1700, 3200]
 vis = [3200, 7000]
 ir = [7000, np.inf]
+broadband_edges = [xray[1], euv[1], fuv[1], nuv[1], vis[1]]
+broadbands = [xray, euv, fuv, nuv, vis, [ir[0], 55000]]
+broadband_names = ['X-ray', 'EUV', 'FUV', 'NUV', 'Visible', 'IR']
 
 
 # -----------------------------------------------------------------------------
@@ -217,7 +221,7 @@ specstrings = ['x1d', 'mod_euv', 'mod_lya', 'spec', 'sx1', 'mod_phx', 'coadd']
 #listed in normalization order
 instruments = ['hst_cos_g130m','hst_cos_g160m','hst_cos_g230l','hst_sts_g140m','hst_sts_e140m','hst_sts_e230m',
                'hst_sts_e230h','hst_sts_g230l','hst_sts_g430l','hst_sts_g430m','mod_gap_fill-',
-               'xmm_epc_multi','xmm_epc_pn---','cxo_---_-----', 'mod_euv_young', 'mod_apc_-----',
+               'xmm_epc_multi','xmm_epc_pn---', 'cxo_acs_-----', 'mod_euv_young', 'mod_apc_-----',
                'mod_lya_young', 'mod_phx_-----', 'oth_---_other']
 instvals = [2**i for i in range(len(instruments))]
 
@@ -231,13 +235,13 @@ instnames = {'xobs': 'XMM or Chandra', 'xmm': 'XMM', 'cxo': 'Chandra', 'euv': 'E
              'lya': 'Ly$\\alpha$ Reconstruction', 'c130m': 'HST COS G130M', 'c160m': 'HST COS G160M',
              'c230l': 'HST COS G230L', 's140m': 'HST STIS E140M', 's230m': 'HST STIS E230M',
              's230h': 'HST STIS E230H', 's230l': 'HST STIS G230L', 's430m': 'HST STIS G430M',
-             's430l': 'HST STIS G430L'}
+             's430l': 'HST STIS G430L', 'acs':'ACIS'}
 instabbrevs = {'xobs':'XMM or Chandra', 'apec':'APEC', 'euv':'Empirical EUV Estimate', 'hst':'HST', 'phx':'PHOENIX'}
 
 # for use in making FITS headers
 HLSPtelescopes = {'hst':'HST', 'cxo':'CXO', 'xmm':'XMM', 'mod':'MODEL', 'oth':'OTHER'}
 HLSPinstruments = {'cos':'COS', 'sts':'STIS', 'euv':'EUV-SCALING', 'lya':'LYA-RECONSTRUCTION', 'phx':'PHX',
-                   'epc':'EPIC', 'gap':'POLYNOMIAL-FIT', 'apc':'APEC', '---':'NA'}
+                   'epc':'EPIC', 'gap':'POLYNOMIAL-FIT', 'apc':'APEC', '---':'NA', 'acs':'ACIS'}
 HLSPgratings = {'g130m':'G130M', 'g160m':'G160M', 'g430l':'G430L', 'g430m':'G430M', 'g140m':'G140M', 'e230m':'E230M',
                 'e230h':'E230H', 'g230l':'G230L', 'e140m':'E140M', 'fill-':'NA', '-----':'NA', 'young':'NA',
                 'pn---':'PN', 'multi':'MULTI', 'other':'NA'}

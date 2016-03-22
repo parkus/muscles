@@ -103,7 +103,7 @@ def normspec(spectbl, **kwargs):
     return nplt, eplt
 
 
-def phxCompare(star, wlim=None, ax=None):
+def phxCompare(star, wlim=None, maxpow=None, mindw=None, ax=None):
     if ax is None: ax = plt.gca()
 
     xf = db.findfiles('ir', 'phx', star, fullpaths=True)
@@ -111,14 +111,21 @@ def phxCompare(star, wlim=None, ax=None):
 
     phx = io.read(xf)[0]
     pan = io.read(pf)[0]
+    normfac = pan['normfac'][-1]
     if wlim is not None:
         phx, pan = utils.keepranges(phx, wlim), utils.keepranges(pan, wlim)
 
+    if maxpow or mindw:
+        pan = utils.fancyBin(pan, maxpow=maxpow, mindw=mindw)
+        phx = utils.fancyBin(phx, maxpow=maxpow, mindw=mindw)
+
     Fbol = utils.bolo_integral(star)
     pan['normflux'] = pan['flux']/Fbol
-    phx['normflux'] = phx['flux']*pan['normfac'][-1]/Fbol
+    pan['normerr'] = pan['error']/Fbol
+    phx['normflux'] = phx['flux']*normfac/Fbol
 
-    specstep(pan, key='normflux', label='Panspec', ax=ax)
+    line = specstep(pan, key='normflux', label='Panspec', ax=ax)
+    specstep(pan, key='normerr', label='Panspec Error', ax=ax, color=line.get_color(), ls=':')
     specstep(phx, key='normflux', label='Phoenix', ax=ax)
     ax.set_xlim(wlim)
     ax.legend()

@@ -22,8 +22,8 @@ import scipy.optimize as opt
 import mypy.my_numpy as mnp
 from mypy import specutils, pdfutils
 import rc, utils, io, check, db
-from spectralPhoton.hst.convenience import x2dspec, specphotons
-import spectralPhoton.functions as sp
+# from spectralPhoton.hst.convenience import x2dspec, specphotons
+import spectralPhoton as sp
 import matplotlib.pyplot as plt
 
 colnames = rc.spectbl_format['colnames']
@@ -121,21 +121,22 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False):
     # normalize PHX to photometry
     if not silent: print 'normalizing phoenix to photometry'
     iphx = index('phx')
-    phxnorm = norm2photometry(specs[iphx], silent=silent, plotfit=plotnorms, clean=True)[0]
+    phxnorm, phxerr = norm2photometry(specs[iphx], silent=silent, plotfit=False, clean=True)
     specs[iphx]['flux'] *= phxnorm
     specs[iphx]['normfac'] = phxnorm
-    rc.normfacs[star]['mod_phx_-----'] = phxnorm
+    rc.normfacs[star]['mod_phx_-----'] = phxnorm, phxerr
 
     # normalize g430l/m to PHX
     if not silent: print "normalizing g430l to phoenix"
     i430 = index('sts_g430')
     spec430 = specs[i430]
     spec430 = utils.keepranges(spec430, rc.normranges['hst_sts_g430l'])[:-3]  # clooge to get rid of bad last picel(s)
-    norm430 = normalize(specs[iphx], spec430, safe=False, silent=silent)
+    norm430, norm430err = normalize(specs[iphx], spec430, safe=False, silent=silent)
     specs[i430]['flux'] *= norm430
     specs[i430]['error'] *= norm430
     specs[i430]['normac'] = norm430
-    rc.normfacs[star][db.parse_instrument(names[i430])] = norm430
+    instname = db.parse_instrument(names[i430])
+    rc.normfacs[star][instname] = norm430, norm430err
 
     # trim PHX models so they aren't used to fill small gaps in UV data
     if not silent:
@@ -166,11 +167,11 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False):
                 refspec = filter(lambda spec: refinst in spec.meta['NAME'], specs)
                 assert len(refspec) == 1
                 refspec = refspec[0]
-                normfac = refspec[0]['normfac']
+                normfac, normerr = refspec[0]['normfac'], np.nan
             else:
                 overlap = utils.overlapping(spec, addspec)
                 if not overlap:
-                    normfac = 1.0
+                    normfac, normerr = 1.0, np.nan
                     if not silent:
                         print '\tno overlap, so won\'t normalize'
                 if overlap:
@@ -181,7 +182,7 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False):
                         normspec = addspec
                     else:
                         normspec = utils.keepranges(addspec, normranges)
-                    normfac = normalize(spec, normspec, silent=silent)
+                    normfac, normerr = normalize(spec, normspec, silent=silent)
                     # HACK: phx plot breaks things, so I'm just not doing it for now
                 if plotnorms and normfac != 1.0 and 'phx' not in name:
                     check.vetnormfacs(addspec, spec, normfac, normranges)
@@ -190,10 +191,10 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False):
             addspec['error'] *= normfac
             addspec['normfac'] = normfac
             specs[i] = addspec  # so i can use normalized specs later (lya)
-            rc.normfacs[star][inst] = normfac
+            rc.normfacs[star][inst] = normfac, normerr
         else:
             if 'phx' not in name and 'g430' not in name:
-                rc.normfacs[star][inst] = 1.0
+                rc.normfacs[star][inst] = 1.0, np.nan
             if not silent: print '\twon\'t normalize, cuz you said not to'
 
         spec = smartsplice(spec, addspec, silent=silent)
@@ -303,14 +304,14 @@ def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False, safe
         if not silent:
             print ('no full pixel overlap for at least one spectrum. can\'t '
                    'normalize.')
-        return 1.0
+        return 1.0, np.nan
 
     # if speca has all zero errors (it's a model), don't normalize to it
     if safe and np.all(spectbla[overa]['error'] == 0.0):
         if not silent:
             print ('the master spectrum {} has all zero errors, so {} will '
                    'not be normalized to it'.format(*names))
-            return 1.0
+            return 1.0, np.nan
         #        return spectblb
 
     # rebin to the coarser spectrum
@@ -358,7 +359,7 @@ def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False, safe
 
     good = ~(flagged | zeroerr)
     if np.sum(good) == 0:
-        return 1.0
+        return 1.0, np.nan
 
     def getarea(spec):
         area = np.sum(spec['flux'][good] * dw[good])
@@ -381,21 +382,18 @@ def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False, safe
         if not silent:
             print ('{} > {}, so secondary will not be normalized to master'
                    ''.format(p, worry))
-        return 1.0
+        return 1.0, np.nan
 
     # area ratio
     normfac = areas[0] / areas[1]
 
-    if worry:
-        normfacerr = sqrt((errors[0] / areas[1]) ** 2 +
-                          (areas[0] * errors[1] / areas[1] ** 2) ** 2)
-    else:
-        normfacerr = 0.0
+    normfacerr = sqrt((errors[0] / areas[1]) ** 2 + (areas[0] * errors[1] / areas[1] ** 2) ** 2)
+
     if not silent:
         print ('secondary will be normalized by a factor of {} ({})'
                ''.format(normfac, normfacerr))
 
-    return normfac
+    return normfac, normfacerr
 
 
 def norm2photometry(spec, photom_tbl=None, band_dict=None, silent=False, plotfit=False, return_ln_like=False,
@@ -479,7 +477,14 @@ def norm2photometry(spec, photom_tbl=None, band_dict=None, silent=False, plotfit
             ax1.set_position([0.1, 0.1, 0.85, 0.2])
 
         # fit
-        wp = (const.c/vp).to(u.AA).value
+        ## use mean filter wavelength
+        wp = []
+        for line in tbl:
+            band = band_dict[line['sed_filter']]
+            w, T = band.T
+            wp.append(np.sum(w*T)/np.sum(T))
+        # wp = (const.c/vp).to(u.AA).value
+
         xlim = [0.9*min(wp), 1.1*max(wp)]
         w = (spec['w0'] + spec['w1'])/2.0
         keep = mnp.inranges(w, xlim)
@@ -932,6 +937,8 @@ def auto_phxspec(star, Teff='oldfit', silent=False):
         print 'writing spectrum to {}'.format(path)
     io.writefits(spec, path, overwrite=True)
 
+    return tbl
+
 
 def auto_customspec(star, silent=False):
     ss = rc.loadsettings(star)
@@ -980,33 +987,44 @@ def auto_customspec(star, silent=False):
                                       "".format(config))
 
 
-def auto_photons(star, inst='all'):
+def auto_photons(star, inst='all', fluxed='tag_vs_x1d'):
     alltagfiles = db.findfiles('u', 'tag', star, fullpaths=True)
-    allx1dfiles = db.findfiles('u', 'x1d', star, fullpaths=True)
-    sets = rc.loadsettings(star)
+    # sets = rc.loadsettings(star)
 
     if inst == 'all':
         instruments = map(db.parse_instrument, alltagfiles)
         instruments = list(set(instruments))
-        instruments = filter(lambda s: 'cos' in s, instruments)
+        inst = filter(lambda s: 'cos' in s, instruments)
+
+    if type(inst) == list:
+        [auto_photons(star, i) for i in instruments]
+
+    getInstFiles = lambda files: filter(lambda s: inst in s, files)
+    tagfiles = getInstFiles(alltagfiles)
+    if len(tagfiles) == 0:
+        print 'No tag files found for the {} instrument.'.format(inst)
+        return
+    x1dfiles = [db.findsimilar(tf, 'x1d')[0] for tf in tagfiles]
+
+    # kwds = sets.get_tag_extraction(inst)
+    # if kwds is None:
+    #     if 'cos_g230l' in inst:
+    #         kwds = {'extrsize':30, 'bkoff':[30, -30], 'bksize':[20, 20]}
+    #     else:
+    #         kwds = {}
+
+    photons_list = [sp.hst.readtag(tf, xf, fluxed=fluxed) for tf, xf in zip(tagfiles, x1dfiles)]
+    if any(['corrtag_b' in tf for tf in tagfiles]):
+        photons_a = filter(lambda p: p.obs_metadata[0]['segment'] == 'FUVA', photons_list)
+        photons_b = filter(lambda p: p.obs_metadata[0]['segment'] == 'FUVB', photons_list)
+        photons_a, photons_b = [sum(ps[1:], ps[0]) for ps in [photons_a, photons_b]]
+        pfa, pfb = [db.photonpath(star, inst, s) for s in ['a', 'b']]
+        [p.writeFITS(pf, overwrite=True) for p,pf in [[photons_a, pfa], [photons_b, pfb]]]
     else:
-        instruments = inst if type(inst) is list else [inst]
-
-    for instrument in instruments:
-        getInstFiles = lambda files: filter(lambda s: instrument in s, files)
-        tagfiles = getInstFiles(alltagfiles)
-        if len(tagfiles) == 0:
-            continue
-        x1dfiles = getInstFiles(allx1dfiles)
-
-        kwds = sets.get_tag_extraction(instrument)
-        if kwds is None:
-            if 'cos_g230l' in instrument:
-                kwds = {'extrsize':30, 'bkoff':[30, -30], 'bksize':[20, 20]}
-            else:
-                kwds = {}
-        f = db.photonpath(tagfiles[0])
-        specphotons(tagfiles, x1dfiles, fitsout=f, clobber=True, **kwds)
+        seg = 'a' if 'corrtag' in tagfiles[0] else ''
+        pf = db.photonpath(star, inst, seg)
+        photons = sum(photons_list[1:], photons_list[0])
+        photons.writeFITS(pf, overwrite=True)
 
 
 def remove_line(spec, wavelength, fill_with=None, minclip=None, silent=False):
@@ -1577,6 +1595,7 @@ def auto_curve(star, inst, bands, dt, appx=True, groups=None, fluxed=False):
     for t0, t1 in zip(gtis['start'], gtis['stop']):
         if appx:
             n = round((t1 - t0) / dt)
+            if n == 0: n = 1
             tbinList.append(np.linspace(t0, t1, n+1))
         else:
             tbinList.append(np.arange(t0, t1, dt))

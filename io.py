@@ -214,29 +214,39 @@ def readfits(specfile):
             end3 = Time(sh['pn_date-end']).mjd
             start = min([start1, start2, start3])
             end = max([end1, end2, end3])
+        elif sh['instrume'] == 'ACIS':
+            starts, ends, expts = [_parse_keys_sequential(sh, root) for root in ['DATE_OBS', 'DATE_END', 'EXPTIME']]
+            expt = sum(expts) * 1000.0
+            starts, ends = map(Time, [starts, ends])
+            start = min(starts.mjd)
+            end = max(ends.mjd)
         else:
             start = 0.0
             end = 0.0
             expt = 0.0
-        flux, err = [spec[1].data[s] for s in ['CFlux', 'CFlux_err']]
-        w0, w1 = groomwave(1)
-        insti = db.getinsti(specfile)
-        obsspec = utils.vecs2spectbl(w0, w1, flux, err, expt, instrument=insti, start=start, end=end, star=star,
-                                     filename=specfile)
-        good = np.isfinite(obsspec['flux'])
-        obsspec = obsspec[good]
+
+        if '1214' not in sh['target']:
+            flux, err = [spec['Obs Spectrum'].data[s] for s in ['CFlux', 'CFlux_err']]
+            w0, w1 = groomwave('Obs Spectrum')
+            insti = db.getinsti(specfile)
+            obsspec = utils.vecs2spectbl(w0, w1, flux, err, expt, instrument=insti, start=start, end=end, star=star,
+                                         filename=specfile)
+            good = np.isfinite(obsspec['flux'])
+            obsspec = obsspec[good]
+            spectbls = [obsspec]
+        else:
+            spectbls = []
 
         # next the model
-        flux = spec[2].data['Flux']
+        flux = spec['Model Spectrum'].data['Flux']
         expt, err = 0.0, 0.0
-        w0, w1 = groomwave(2)
-        name_pieces = obsspec.meta['NAME'].split('_')
+        w0, w1 = groomwave('Model Spectrum')
+        name_pieces = db.parse_name(specfile).split('_')
         configuration = 'mod_apc_-----'
         name = '_'.join(name_pieces[:1] + [configuration] + name_pieces[4:])
         insti = rc.getinsti(configuration)
         modspec = utils.vecs2spectbl(w0, w1, flux, err, expt, instrument=insti, name=name, filename=specfile)
-
-        spectbls = [obsspec, modspec]
+        spectbls.append(modspec)
     else:
         raise Exception('fits2tbl cannot parse data from the {} observatory.'.format(observatory))
 
@@ -574,7 +584,7 @@ def writehlsp(star_or_spectbl, components=True):
                 prihdr['APERTURE'] = apertures[0]
             else:
                 prihdr['APERTURE'] = fits.getval(f, 'APERTURE')
-        if 'xmm' in name:
+        if 'xmm' in name or 'cxo' in name:
             hdr = fits.getheader(db.name2path(name))
             prihdr['GRATING'] = 'NA'
             if 'multi' in name:
@@ -586,9 +596,12 @@ def writehlsp(star_or_spectbl, components=True):
                 prihdr['FILTER00'] = hdr['pn_filter']
                 prihdr['FILTER01'] = hdr['mos1_filter']
                 prihdr['FILTER02'] = hdr['mos2_filter']
-            else:
+            if 'pn' in name:
                 prihdr['DETECTOR'] = 'PN'
                 prihdr['FILTER'] = hdr['pn_filter']
+            if 'acs' in name:
+                prihdr['DETECTOR'] = hdr['DETNAM']
+                prihdr['FILTER'] = 'OBF'
 
     prihdr['TARGNAME'] = star.upper()
     prihdr['RA_TARG'] = rc.starprops['RA'][star]
@@ -612,6 +625,8 @@ def writehlsp(star_or_spectbl, components=True):
         if 'xmm' in name:
             prihdr['EXPTIME'] = expt[0]
             prihdr['EXPDEFN'] = 'MEAN'
+        if 'cxo' in name:
+            prihdr['EXPTIME'] = expt[0]
         if not np.allclose(expt, expt[0]):
             expmed = np.median(expt)
             prihdr['EXPTIME'] = expmed
@@ -772,17 +787,20 @@ def writehlsp(star_or_spectbl, components=True):
         srchdu.name = 'SRCSPECS'
 
         hdus.append(srchdu)
-    if 'xmm' in name:
+    if 'xmm' in name or 'cxo' in name:
         srchdr = fits.Header()
-        srchdr['COMMENT'] = ('This extension contains a list of observation IDs (DATASET_ID used for consistency '
-                             'with HST data) that can be used to '
-                             'locate the '
-                             'data in the XMM archives. XMM data all come from only a single observation (unlike the '
-                             'HST observations), but this extension is retained in place of a keyword for consistency '
-                             'with the HST files.')
+        if 'xmm' in name:
+            srchdr['COMMENT'] = ('This extension contains a list of observation IDs (DATASET_ID used for consistency '
+                                 'with HST data) that can be used to locate the data in the XMM archives. XMM data '
+                                 'all come from only a single observation (unlike the HST observations), '
+                                 'but this extension is retained in place of a keyword for consistency with the HST '
+                                 'files.')
+        if 'cxo' in name:
+            srchdr['COMMENT'] = ('This extension contains a list of observation IDs (DATASET_ID used for consistency '
+                                 'with HST data) that can be used to locate the data in the CXO archives.')
         srchdr['EXTNO'] = 3
-        obsid = hdr['OBS_ID']
-        col = fits.Column(name='DATASET_ID', format='10A', array=[obsid])
+        obsids = _parse_keys_sequential(hdr, 'OBS_ID')
+        col = fits.Column(name='DATASET_ID', format='10A', array=obsids)
         srchdu = fits.BinTableHDU.from_columns([col], header=srchdr)
         srchdu.name = 'SRCSPECS'
         hdus.append(srchdu)
@@ -827,11 +845,28 @@ def read_xsections(species, dissoc_only=True):
 _si2cgs_flux = lambda x: (x * u.W / u.m**2 / u.nm).to(u.erg/u.s/u.AA/u.cm**2)
 
 
+def _parse_keys_sequential(hdr, key_root):
+    lst = []
+    if key_root in hdr:
+        lst.append(hdr[key_root])
+    i = 0
+    while True:
+        key = key_root + str(i)
+        if key in hdr:
+            lst.append(hdr[key])
+        else:
+            if i > 0:
+                return lst
+        i += 1
+
+
+
+
 def read_solar(period='active bright'):
     filename = path.join(rc.solarpath, 'WHI_reference_spectra.dat')
     data = np.loadtxt(filename, skiprows=142)
     w0, fluxes = data[:,0], data[:,1:4].T
-    w1 = w0 + 0.1
+    w1 = np.append(w0[1:], w0[-1] + 0.1)
     w0, w1 = 10*w0*u.AA, 10*w1*u.AA
 
     periods = ['active dark', 'active bright', 'quiet']

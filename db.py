@@ -40,7 +40,6 @@ def validpath(name):
         else:
             return path
 
-
 def findsimilar(specfile, newstring):
     """Find a file with the same identifier as sepcfile, but that also contains
     newstring in the file name. For example, find the the coadd version of the
@@ -121,7 +120,7 @@ def allsourcefiles(star):
     return choosesourcespecs(allfiles)
 
 
-def panfiles(star, config):
+def panfiles(star):
     """Return the files for the spectra to be spliced into a panspectrum,
     replacing "raw" files with coadds and custom extractions as appropriate
     and ordering according to how the spectra should be normalized."""
@@ -292,11 +291,11 @@ def photometrypath(star):
     return os.path.join(rc.photometrypath, 'photometry_{}.vot'.format(star))
 
 
-def photonpath(filepath):
-    fdir, fname = os.path.split(filepath)
-    rootdir, _ = os.path.split(fdir)
-    root = parse_info(fname, 0, 5)
-    return os.path.join(rootdir, 'photons', root + '_photons.fits')
+def photonpath(star, inst, seg=''):
+    if seg == '':
+        seg = '-'
+    name = '_'.join([inst, seg, star, 'photons.fits'])
+    return os.path.join(rc.photondir, name)
 
 
 def flarepath(star, inst, label):

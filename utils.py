@@ -82,6 +82,15 @@ def flux_integral(spectbl, wa=None, wb=None, normed=False):
         if 'normflux' not in spectbl.colnames:
             spectbl = add_normflux(spectbl)
 
+    if hasattr(wa, '__iter__'):
+        rng = np.asarray(wa)
+        if rng.size == 2:
+            wa, wb = rng
+        elif rng.size > 2:
+            results = [flux_integral(spectbl, _rng, normed=normed) for _rng in rng]
+            fluxes, errs = zip(*results)
+            return np.sum(fluxes), np.quadsum(errs)
+
     if wa is not None:
         spectbl = split_exact(spectbl, wa, 'red')
     if wb is not None:
@@ -90,7 +99,7 @@ def flux_integral(spectbl, wa=None, wb=None, normed=False):
     dw = spectbl['w1'] - spectbl['w0']
 
     if normed:
-        return np.sum(spectbl['normflux'] * dw)
+        return np.sum(spectbl['normflux'] * dw), mnp.quadsum(spectbl['normerr'] * dw)
     else:
         return np.sum(spectbl['flux'] * dw), mnp.quadsum(spectbl['error'] * dw)
 
@@ -307,6 +316,18 @@ def gapsplit(spec_or_bins):
     isplit.append(None)
     return [spec_or_bins[i0:i1] for i0,i1 in zip(isplit[:-1], isplit[1:])]
 
+
+def instsplit(spec):
+    instvec = spec['instrument']
+    insts = np.unique(instvec)
+    instspecs = [spec[instvec == inst] for inst in insts]
+    specs = []
+    for spec in instspecs:
+        specs.extend(gapsplit(spec))
+    specs = sorted(specs, key=lambda s: s['w0'][0])
+    return specs
+
+
 def overlapping(spec_or_bins_a, spec_or_bins_b):
     """Check if there is any overlap."""
     getbins = lambda sob: sob if type(sob) is np.ndarray else wbins(sob)
@@ -436,7 +457,7 @@ def edges2bins(we):
 
 def bins2edges(wbins):
     w0, w1 = wbins.T
-    if ~np.allclose(w0[1:], w1[:-1]):
+    if not np.allclose(w0[1:], w1[:-1]):
         raise ValueError('There are gaps in the spectrum.')
     else:
         return np.append(w0, w1[-1])
@@ -707,3 +728,78 @@ def add_photonflux(spectbl):
     spectbl['flux_photon'] = (spectbl['flux'] / Ephoton).to(1.0/u.cm**2/u.s/u.AA)
     spectbl['flux_photon_err'] = (spectbl['error'] / Ephoton).to(1.0/u.cm**2/u.s/u.AA)
     return spectbl
+
+
+def killnegatives(spectbl, sep_insts=False):
+    """
+    Removes negative bins by summing with adjacent bins until there are no negative bins left. I.e. the resolution in
+    negative areas is degraded until the flux is no longer negative.
+
+    Parameters
+    ----------
+    spectbl
+
+    Returns
+    -------
+    newtbl
+        A new bare-bones spectbl that has bin edges, flux, and error
+        WARNING: the obs date, instrument, etc. columns will all get set to default values, as will all of the
+        metadata except for 'star'
+    """
+    # if not np.any(spectbl['flux'] < 0):
+    #     return spectbl
+
+    if sep_insts:
+        speclst = instsplit(spectbl)
+        speclst = map(killnegatives, speclst)
+        return  vstack(speclst)
+
+    if hasgaps(spectbl):
+        speclst = gapsplit(spectbl)
+        speclst = map(killnegatives, speclst)
+        return vstack(speclst)
+
+    w0, w1, f_dsty, e_dsty = [spectbl[s].copy() for s in ['w0', 'w1', 'flux', 'error']]
+    dw = w1 - w0
+    f, e = f_dsty*dw, e_dsty*dw
+    v = e**2
+
+    forward = True
+    while True:
+        negs_bool = f < 0
+        if not np.any(negs_bool) or len(f) <= 1:
+            break
+
+        negs_i, = np.where(f < 0)
+
+        # remove any adjacent bins or else the flux will be double-counted
+        adjacent = np.zeros_like(negs_i, bool)
+        adjacent[1:] = negs_i[1:] == negs_i[:-1] + 1
+        negs_i = negs_i[~adjacent]
+
+        # now sum pairs of bins
+        if forward:
+            # if the last pt is negative, forget it for this iteration
+            if negs_i[-1] == len(f) - 1:
+                negs_i = negs_i[:-1]
+            sum_i = negs_i + 1
+            w1[negs_i] = w1[sum_i]
+        else:
+            # now its the first point we need to worry about
+            if negs_i[0] == 0:
+                negs_i = negs_i[1:]
+            sum_i = negs_i - 1
+            w0[negs_i] = w0[sum_i]
+
+        f[negs_i] += f[sum_i]
+        v[negs_i] += v[sum_i]
+        w0, w1, f, v = [np.delete(a, sum_i) for a in [w0, w1, f, v]]
+
+        forward = not forward
+
+    dw = w1 - w0
+    f_dsty, e_dsty = f/dw, np.sqrt(v)/dw
+    newtbl = vecs2spectbl(w0, w1, f_dsty, e_dsty)
+    newtbl.meta = spectbl.meta
+    return newtbl
+

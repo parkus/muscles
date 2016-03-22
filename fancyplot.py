@@ -6,7 +6,7 @@ import rc, io, reduce, db, utils, plot
 import matplotlib as mpl
 import itertools
 import uneven.functions as un
-import spectralPhoton.functions as sp
+# import spectralPhoton.functions as sp
 import numpy as np
 from astropy.io import fits
 from matplotlib.ticker import AutoMinorLocator
@@ -675,7 +675,7 @@ def phxFit(star='gj832', ax=None):
 
     pline = plot.specstep(pan, ax=ax, color='k', err=False, key='normflux')
     xline = plot.specstep(phx, ax=ax, color='gray', err=False, key='normflux')
-    ax.legend((pline, xline), ('$HST$ Data', 'PHONEIX Model'), loc='lower right')
+    ax.legend((pline, xline), ('$HST$ Data', 'PHOENIX Model'), loc='lower right')
 
 
 def rangebar(y, rng, label, ax=plt.gca(), styles=['|-|', '<->'], labelpos='above', txt_kwds={}, lbl_offset=0.0):
