@@ -222,7 +222,7 @@ specstrings = ['x1d', 'mod_euv', 'mod_lya', 'spec', 'sx1', 'mod_phx', 'coadd']
 instruments = ['hst_cos_g130m','hst_cos_g160m','hst_cos_g230l','hst_sts_g140m','hst_sts_e140m','hst_sts_e230m',
                'hst_sts_e230h','hst_sts_g230l','hst_sts_g430l','hst_sts_g430m','mod_gap_fill-',
                'xmm_epc_multi','xmm_epc_pn---', 'cxo_acs_-----', 'mod_euv_young', 'mod_apc_-----',
-               'mod_lya_young', 'mod_phx_-----', 'oth_---_other']
+               'mod_lya_young', 'mod_phx_-----', 'oth_---_other', 'hst_sts_g750l']
 instvals = [2**i for i in range(len(instruments))]
 
 # for use in making plots
@@ -303,9 +303,14 @@ class StarSettings:
         self.notes = []
         self.custom_ranges = {'configs':[], 'ranges':[]}
         self.norm_ranges = {'configs':[], 'ranges':[]}
+        self.wave_offsets = {'configs':[], 'offsets':[]}
         self.norm_order = []
         self.prenormed = []
         self.weird_norm = {}
+
+    def add_wave_offset(self, config, offset):
+        self.wave_offsets['configs'].append(config)
+        self.wave_offsets['offsets'].append(offset)
 
     def add_tag_extraction(self, config, **kwds):
         """Add a custom extraction for the tags as a config string and then kwds to provide
@@ -328,6 +333,17 @@ class StarSettings:
         """Add good wavelength range for a spectrum."""
         self.norm_ranges['configs'].append(config)
         self.norm_ranges['ranges'].append(ranges)
+
+    def get_wave_offset(self, config):
+        configmatch = lambda s: s in config
+        configs = filter(configmatch, self.wave_offsets['configs'])
+        if len(configs) > 1:
+            raise ValueError('multiple wave offset matches')
+        elif len(configs) == 1:
+            i = self.wave_offsets['configs'].index(configs[0])
+            return self.wave_offsets['offsets'][i]
+        else:
+            return None
 
     def get_custom_extraction(self, config):
         configmatch = lambda s: config in s['config']
@@ -398,4 +414,5 @@ def loadsettings(star):
     ss.norm_order = safeget('norm_order')
     ss.prenormed = safeget('prenormed')
     ss.weird_norm = safeget('weird_norm')
+    ss.wave_offsets = safeget('wave_offsets')
     return ss

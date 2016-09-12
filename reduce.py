@@ -22,7 +22,7 @@ import scipy.optimize as opt
 import mypy.my_numpy as mnp
 from mypy import specutils, pdfutils
 import rc, utils, io, check, db
-# from spectralPhoton.hst.convenience import x2dspec, specphotons
+from spectralPhoton.hst import x2dspec
 import spectralPhoton as sp
 import matplotlib.pyplot as plt
 
@@ -65,6 +65,16 @@ def theworks(star, newphx=False, silent=False):
 
 
 def panspectrum(star, savespecs=True, plotnorms=False, silent=False):
+def adaptive_rebin_pans(star):
+    pan = io.readpan(star)
+    adapt = utils.killnegatives(pan, quickndirty=False)
+    over = utils.evenbin(adapt, 1.0)
+    name = pan.meta['NAME']
+    adapt.meta['NAME'] = name.replace('native', 'adaptive')
+    over.meta['NAME'] = name.replace('native', 'adaptive_oversampled')
+    [io.writehlsp(spec, components=False) for spec in  [adapt, over]]
+
+
     """
     Coadd and splice the provided spectra into one panchromatic spectrum
     sampled at the native resolutions and constant R.
@@ -937,7 +947,7 @@ def auto_phxspec(star, Teff='oldfit', silent=False):
         print 'writing spectrum to {}'.format(path)
     io.writefits(spec, path, overwrite=True)
 
-    return tbl
+    return spec
 
 
 def auto_customspec(star, silent=False):

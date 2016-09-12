@@ -323,6 +323,10 @@ def hlsppath(name_or_star):
                 product = 'var-res-sed'
             elif 'constant_dR' in name:
                 product = 'const-res-sed'
+            elif 'adaptive_oversampled' in name:
+                product = 'adapt-const-res-sed'
+            elif 'adaptive' in name:
+                product = 'adapt-var-res-sed'
         else:
             tel, inst, filt = parse_instrument(name).split('_')
             tel = rc.HLSPtelescopes[tel].lower()

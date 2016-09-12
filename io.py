@@ -90,6 +90,7 @@ def read_panspec_sources(star):
 
     return specs, lyaspec
 
+
 def read(specfiles):
     """A catch-all function to read in FITS spectra from all variety of
     instruments and provide standardized output as a list of astropy tables.
@@ -128,6 +129,7 @@ def read(specfiles):
     except IOError:
         pass
     return specs
+
 
 def readstdfits(specfile):
     """Read a fits file that was created by writefits."""
@@ -200,7 +202,11 @@ def readfits(specfile):
 
         # first the observed spectrum
         optel = db.parse_grating(specfile)
-        if optel == 'pn---':
+        if 'gj551' in specfile:
+            expt = sh['pn_duration']
+            start = np.nan
+            end = np.nan
+        elif optel == 'pn---':
             expt = sh['spec_exptime_pn'] * 1000.0
             start = Time(sh['pn_date-obs']).mjd
             end = Time(sh['pn_date-end']).mjd

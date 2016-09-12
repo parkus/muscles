@@ -730,7 +730,7 @@ def add_photonflux(spectbl):
     return spectbl
 
 
-def killnegatives(spectbl, sep_insts=False):
+def killnegatives(spectbl, sep_insts=False, quickndirty=True):
     """
     Removes negative bins by summing with adjacent bins until there are no negative bins left. I.e. the resolution in
     negative areas is degraded until the flux is no longer negative.
@@ -797,9 +797,13 @@ def killnegatives(spectbl, sep_insts=False):
 
         forward = not forward
 
-    dw = w1 - w0
-    f_dsty, e_dsty = f/dw, np.sqrt(v)/dw
-    newtbl = vecs2spectbl(w0, w1, f_dsty, e_dsty)
-    newtbl.meta = spectbl.meta
-    return newtbl
+    if quickndirty:
+        dw = w1 - w0
+        f_dsty, e_dsty = f/dw, np.sqrt(v)/dw
+        newtbl = vecs2spectbl(w0, w1, f_dsty, e_dsty)
+        newtbl.meta = spectbl.meta
+        return newtbl
+    else:
+        bins = np.array([w0, w1]).T
+        return rebin(spectbl, bins)
 
