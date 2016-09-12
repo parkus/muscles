@@ -64,7 +64,6 @@ def theworks(star, newphx=False, silent=False):
     io.writehlsp(star, overwrite=True)
 
 
-def panspectrum(star, savespecs=True, plotnorms=False, silent=False):
 def adaptive_rebin_pans(star):
     pan = io.readpan(star)
     adapt = utils.killnegatives(pan, quickndirty=False)
@@ -75,6 +74,7 @@ def adaptive_rebin_pans(star):
     [io.writehlsp(spec, components=False) for spec in  [adapt, over]]
 
 
+def panspectrum(star, savespecs=True, plotnorms=False, silent=False):
     """
     Coadd and splice the provided spectra into one panchromatic spectrum
     sampled at the native resolutions and constant R.
