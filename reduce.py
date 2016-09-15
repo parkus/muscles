@@ -136,24 +136,23 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False):
     specs[iphx]['normfac'] = phxnorm
     rc.normfacs[star]['mod_phx_-----'] = phxnorm, phxerr
 
-    # normalize g430l/m to PHX
-    if not silent: print "normalizing g430l to phoenix"
-    i430 = index('sts_g430')
-    spec430 = specs[i430]
-    spec430 = utils.keepranges(spec430, rc.normranges['hst_sts_g430l'])[:-3]  # clooge to get rid of bad last picel(s)
-    norm430, norm430err = normalize(specs[iphx], spec430, safe=False, silent=silent)
-    specs[i430]['flux'] *= norm430
-    specs[i430]['error'] *= norm430
-    specs[i430]['normac'] = norm430
-    instname = db.parse_instrument(names[i430])
-    rc.normfacs[star][instname] = norm430, norm430err
-
     # trim PHX models so they aren't used to fill small gaps in UV data
     if not silent:
         print '\n\ttrimming PHOENIX to 2500+'
     for i in range(len(specs)):
         if 'mod_phx' in names[i]:
             specs[i] = utils.split_exact(specs[i], 2500., 'red')
+
+    # reorder spectra so that phoenix is spliced in before 430 and 750 spectra
+    for cen in ['430', '750']:
+        try:
+            i = index(cen)
+            temp = specs[i]
+            specs.remove(temp)
+            specs.append(temp)
+        except AssertionError:
+            pass
+    names = [s.meta['NAME'] for s in specs]
 
     # normalize and splice according to input order
     spec = specs[0]
@@ -192,7 +191,8 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False):
                         normspec = addspec
                     else:
                         normspec = utils.keepranges(addspec, normranges)
-                    normfac, normerr = normalize(spec, normspec, silent=silent)
+                    safe = False if ('430' in name or '750' in name) else True
+                    normfac, normerr = normalize(spec, normspec, silent=silent, safe=safe)
                     # HACK: phx plot breaks things, so I'm just not doing it for now
                 if plotnorms and normfac != 1.0 and 'phx' not in name:
                     check.vetnormfacs(addspec, spec, normfac, normranges)
