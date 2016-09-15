@@ -383,8 +383,30 @@ def get_photometry(star, lo=0.0, hi=np.inf, silent=False):
     tbl = tbl[inrange]
 
     # trim to unique photometry
-    uniq = np.unique(tbl['sed_flux'], return_index=True)[1]
-    tbl = tbl[uniq]
+    i = 0
+    while i < len(tbl):
+        msmt1 = tbl['sed_freq', 'sed_flux'][i]
+        e1 = tbl['sed_eflux'][i]
+        j = i+1
+        delline = False
+        while j < len(tbl):
+            msmt2 =tbl['sed_freq', 'sed_flux'][j]
+            e2 = tbl['sed_eflux'][j]
+            if msmt1.data.tolist() == msmt2.data.tolist():
+                if np.isfinite(e2):
+                    if not np.isfinite(e1) or e1 == e2:
+                        delline = True
+                        break
+                    else:
+                        j += 1
+                else:
+                    tbl.remove_row(j)
+            else:
+                j += 1
+        if delline == True:
+            tbl.remove_row(i)
+        else:
+            i += 1
 
     return tbl, bands
 
@@ -577,8 +599,9 @@ def writehlsp(star_or_spectbl, components=True):
 
         if 'hst' in name:
             # clooge. meh.
-            band = 'v' if '430' in name else 'u'
+            band = name[0]
             spectype = 'x1d' if band == 'u' else 'sx1'
+            if 'gj551' in name: spectype = 'x1d'
             if 'gj1214' in name and 'sts_g230l' in name: spectype = 'x2d'
             f = db.findfiles(band, name, fullpaths=True)[0]
             if 'custom' in name or 'coadd' in name:
@@ -622,11 +645,13 @@ def writehlsp(star_or_spectbl, components=True):
     if not (pan or mod):
         mjd0 = np.min(spectbl['minobsdate'])
         mjd1 = np.max(spectbl['maxobsdate'])
-        date0 = Time(mjd0, format='mjd')
-        date1 = Time(mjd1, format='mjd')
-        prihdr['DATE-OBS'] = date0.isot
-        prihdr['EXPSTART'] = date0.mjd
-        prihdr['EXPEND'] = date1.mjd
+        if np.isfinite(mjd0):
+            date0 = Time(mjd0, format='mjd')
+            prihdr['DATE-OBS'] = date0.isot
+            prihdr['EXPSTART'] = date0.mjd
+        if np.isfinite(mjd1):
+            date1 = Time(mjd1, format='mjd')
+            prihdr['EXPEND'] =  date1.mjd
         expt = spectbl['exptime']
         if 'xmm' in name:
             prihdr['EXPTIME'] = expt[0]
@@ -646,7 +671,7 @@ def writehlsp(star_or_spectbl, components=True):
     if not (pan or mod) or 'phx' in name:
         try:
             inst = db.parse_instrument(name)
-            normfac = rc.normfacs[star][inst]
+            normfac = rc.normfacs[star][inst][0]
             panspec = readpan(star)
             insti = rc.getinsti(inst)
             assert insti == spectbl['instrument'][0]
