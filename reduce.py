@@ -581,7 +581,7 @@ def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
         keepranges = mnp.rangeset_subtract(fullrange, cutranges)
         if len(keepranges) == 0:
             return None
-        return utils.keepranges(speca, speca)
+        return utils.keepranges(speca, keepranges)
     both = [spectbla, spectblb]
     spectbla, spectblb = map(groom, both, both[::-1])
     assert not (spectbla is None and spectblb is None)
