@@ -488,6 +488,11 @@ def phxdata(Teff, logg=4.5, FeH=0.0, aM=0.0, repo='ftp', ftpbackup=True):
     isn't found in the specified repo location and the file will be saved
     in the specified location.
     """
+    assert Teff in rc.phxTgrid
+    assert logg in rc.phxggrid
+    assert FeH in rc.phxZgrid
+    assert aM in rc.phxagrid
+
     path = rc.phxurl(Teff, logg, FeH, aM, repo=repo)
     try:
         fspec = fits.open(path)

@@ -128,7 +128,7 @@ def panfiles(star):
     allfiles = allsourcefiles(star)
     use = lambda name: any([s in name for s in rc.instruments])
     allfiles = filter(use, allfiles)
-    filterfiles = lambda s: filter(lambda ss: s in ss, allfiles)
+    filterfiles = lambda s: filter(lambda ss: s == parse_info(ss, 1, 4), allfiles)
     files = map(filterfiles, rc.instruments)
     files = reduce(lambda x, y: x + y, files)
 

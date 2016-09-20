@@ -126,9 +126,9 @@ def phxCompare(star, wlim=None, maxpow=None, mindw=None, ax=None):
 
     line = specstep(pan, key='normflux', label='Panspec', ax=ax)
     specstep(pan, key='normerr', label='Panspec Error', ax=ax, color=line.get_color(), ls=':')
-    specstep(phx, key='normflux', label='Phoenix', ax=ax)
+    specstep(phx, key='normflux', label='Phoenix', ax=ax, color='r', alpha=0.5)
     ax.set_xlim(wlim)
-    ax.legend()
+    ax.legend(loc='best')
 
 
 def specstep(spectbl, *args, **kwargs):

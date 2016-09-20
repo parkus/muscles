@@ -53,7 +53,7 @@ def fancyBin(spec, maxpow=30000, mindw=None):
     return vstack(pieces)
 
 
-def bolo_integral(star_or_panspec):
+def bolo_integral(star_or_panspec, uplim=np.inf):
     """Compute the integral of all flux for the star."""
     if star_or_panspec == 'sun':
         return rc.insolation
@@ -70,7 +70,7 @@ def bolo_integral(star_or_panspec):
     normfac = pan[-1]['normfac']
 
     Ibody = flux_integral(pan)[0]
-    Itail = normfac*quad(fit_unnormed, pan['w1'][-1], np.inf)[0]
+    Itail = normfac*quad(fit_unnormed, pan['w1'][-1], uplim)[0]
     I = Ibody + Itail
 
     return I
@@ -81,6 +81,9 @@ def flux_integral(spectbl, wa=None, wb=None, normed=False):
     if normed:
         if 'normflux' not in spectbl.colnames:
             spectbl = add_normflux(spectbl)
+
+    assert wa is None or wa >= spectbl['w0'][0]
+    assert wb is None or wb <= spectbl['w1'][-1]
 
     if hasattr(wa, '__iter__'):
         rng = np.asarray(wa)

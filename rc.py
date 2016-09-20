@@ -178,8 +178,7 @@ def seriousdqs(path):
     if '_sts_' in path:
         return (1 | 2 | 4 | 128 | 256 | 512 | 4096 | 8192)
     else:
-        raise NotImplementedError('No serious dq flags defined for config\n{}'
-                                  ''.format(path))
+        raise NotImplementedError('No serious dq flags defined for config\n{}'.format(path))
 spectbl_format =  {'units' : ['Angstrom']*2 + ['erg/s/cm2/Angstrom']*2 + ['s','','','','d','d'],
                    'dtypes' : ['f8']*5 + ['i2', 'i4'] + ['f8']*3,
                    'fmts' : ['.2f']*2 + ['.2e']*2 + ['.1f', 'b', 'd', '.2f', '.2f', '.2f'],
@@ -200,13 +199,12 @@ spectbl_format =  {'units' : ['Angstrom']*2 + ['erg/s/cm2/Angstrom']*2 + ['s',''
 stdbands = read_json(stdbandpath)
 
 # prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m', 'sts_g430l', 'sts_g430m', 'mod_apc']
-prenormed = ['mod_lya', 'mod_euv', 'sts_g430l', 'cos_g130m', 'cos_g160m', 'cos_g230l', 'sts_g430m', 'mod_phx',
-             'mod_apc']
+prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m', 'cos_g230l', 'mod_phx', 'mod_apc']
 normranges = {'hst_sts_g430l':[3500.,10000.]}
 
 lyacut = [1209.5, 1222.0]
 panres = 1.0
-norm2phot_outlier_cut = 0.1
+norm2phot_outlier_cut = 0.01
 teff_system_err = 100
 gap_fit_order = 2
 gap_fit_span = 20.
@@ -222,7 +220,7 @@ specstrings = ['x1d', 'mod_euv', 'mod_lya', 'spec', 'sx1', 'mod_phx', 'coadd']
 instruments = ['hst_cos_g130m','hst_cos_g160m','hst_cos_g230l','hst_sts_g140m','hst_sts_e140m','hst_sts_e230m',
                'hst_sts_e230h','hst_sts_g230l','hst_sts_g430l','hst_sts_g430m','mod_gap_fill-',
                'xmm_epc_multi','xmm_epc_pn---', 'cxo_acs_-----', 'mod_euv_young', 'mod_apc_-----',
-               'mod_lya_young', 'mod_phx_-----', 'oth_---_other', 'hst_sts_g750l']
+               'mod_lya_young', 'mod_phx_-----', 'oth_---_other', 'hst_sts_g230lb', 'hst_sts_g750l']
 instvals = [2**i for i in range(len(instruments))]
 
 # for use in making plots
@@ -244,7 +242,7 @@ HLSPinstruments = {'cos':'COS', 'sts':'STIS', 'euv':'EUV-SCALING', 'lya':'LYA-RE
                    'epc':'EPIC', 'gap':'POLYNOMIAL-FIT', 'apc':'APEC', '---':'NA', 'acs':'ACIS'}
 HLSPgratings = {'g130m':'G130M', 'g160m':'G160M', 'g430l':'G430L', 'g430m':'G430M', 'g140m':'G140M', 'e230m':'E230M',
                 'e230h':'E230H', 'g230l':'G230L', 'e140m':'E140M', 'fill-':'NA', '-----':'NA', 'young':'NA',
-                'pn---':'PN', 'multi':'MULTI', 'other':'NA'}
+                'pn---':'PN', 'multi':'MULTI', 'other':'NA', 'g750l':'G750L', 'g230lb':'G230LB'}
 
 
 def getinststr(inst_val):
