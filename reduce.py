@@ -564,6 +564,32 @@ def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
     splicedspec : astropy Table
         The spliced spectrum.
     """
+
+    # if there are zeros or nans for errors in one spectrum but not the other, delete portions as appropriate
+    def groom(speca, specb):
+        getgood = lambda spec: np.isfinite(spec['error']) & (spec['error'] > 0)
+        bada = ~getgood(speca)
+        badrangesa = specutils.flags2ranges(utils.wbins(speca), bada)
+        if not np.any(badrangesa):
+            return speca
+        goodb = getgood(specb)
+        goodrangesb = specutils.flags2ranges(utils.wbins(specb), goodb)
+        cutranges = mnp.range_intersect(badrangesa, goodrangesb)
+        if len(cutranges) == 0:
+            return speca
+        fullrange = [[speca['w0'][0], speca['w1'][-1]]]
+        keepranges = mnp.rangeset_subtract(fullrange, cutranges)
+        if len(keepranges) == 0:
+            return None
+        return utils.keepranges(speca, speca)
+    both = [spectbla, spectblb]
+    spectbla, spectblb = map(groom, both, both[::-1])
+    assert not (spectbla is None and spectblb is None)
+    if spectbla is None:
+        return spectblb
+    if spectblb is None:
+        return spectbla
+
     # sort the two spectra
     both = [spectbla, spectblb]
     both0 = [spectbla, spectblb]
@@ -586,22 +612,6 @@ def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
     oboth = [ospec0, ospec1]
     wr0, wr1 = [[s['w0'][0], s['w1'][-1]] for s in oboth]
     wr = [max(wr0[0], wr1[0]), min(wr0[1], wr1[1])]
-
-    # if either spectrum has zeros for errors, don't use it for any of the
-    # overlap
-    allzeroerrs = lambda spec: np.all(spec['error'] == 0.0)
-
-    # somehow the error for one of the phx entries is being changed to 0
-    # from nan, so doing allnan on the original spectrum is a workaround
-    ismodel0 = allzeroerrs(ospec0) or allzeroerrs(spec0)
-    ismodel1 = allzeroerrs(ospec1) or allzeroerrs(spec1)
-    if ismodel1 and not ismodel0:
-        return splice(spec1, spec0)
-    if ismodel0 and not ismodel1:
-        return splice(spec0, spec1)
-    if ismodel0 and ismodel1:
-        if not silent: print 'Both spectra are purely models in the overlap. Keeping the first of the two.'
-        return splice(both0[1], both0[0])
 
     # if the spectra have gaps within the overlap, split them at their gaps,
     # sort them, and splice in pairs
