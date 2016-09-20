@@ -74,7 +74,7 @@ def adaptive_rebin_pans(star):
     [io.writehlsp(spec, components=False) for spec in  [adapt, over]]
 
 
-def panspectrum(star, savespecs=True, plotnorms=False, silent=False):
+def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr='constSN'):
     """
     Coadd and splice the provided spectra into one panchromatic spectrum
     sampled at the native resolutions and constant R.
@@ -131,7 +131,7 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False):
     # normalize PHX to photometry
     if not silent: print 'normalizing phoenix to photometry'
     iphx = index('phx')
-    phxnorm, phxerr = norm2photometry(specs[iphx], silent=silent, plotfit=False, clean=True)
+    phxnorm, phxerr = norm2photometry(specs[iphx], silent=silent, plotfit=False, clean=True, err=phxnormerr)
     specs[iphx]['flux'] *= phxnorm
     specs[iphx]['normfac'] = phxnorm
     rc.normfacs[star]['mod_phx_-----'] = phxnorm, phxerr
@@ -407,7 +407,7 @@ def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False, safe
 
 
 def norm2photometry(spec, photom_tbl=None, band_dict=None, silent=False, plotfit=False, return_ln_like=False,
-                    return_tbl_and_err=False, clean=False, err='adaptive'):
+                    return_tbl_and_err=False, clean=False, err='constSN'):
 
     if not silent: print "Normalizing {} to photometry.".format(spec.meta['NAME'])
     if photom_tbl is None:
@@ -433,31 +433,39 @@ def norm2photometry(spec, photom_tbl=None, band_dict=None, silent=False, plotfit
         rbi = np.interp(v[::-1], vb[::-1], rb[::-1])[::-1]
         synphot_dict[key] = np.trapz(rbi*fnu, v)/np.trapz(rb, vb) # Jy
 
-    synphot = np.array([synphot_dict[key] for key in tbl['sed_filter']])
-
-    phot = tbl['sed_flux']
-    vp = tbl['sed_freq']
-    cut_prob_all_pts = rc.norm2phot_outlier_cut
-    outliers = tbl[0:0]
     if type(err) is not str:
         std = err
+    synphot = np.array([synphot_dict[key] for key in tbl['sed_filter']])
+    phot = np.array(tbl['sed_flux'], 'f8')
+    vp = np.array(tbl['sed_freq'], 'f8')
+    cut_prob_all_pts = rc.norm2phot_outlier_cut
+    outliers = tbl[0:0]
     while True:
         if len(phot) < 3:
             raise ValueError('Only three photometry points (some may have been clipped). Need at least three to '
                              'safely estimate the scatter.')
-        S = np.sum(synphot/phot)
-        S2 = np.sum(synphot**2/phot**2)
+        if err == 'constSN':
+            S = np.sum(synphot/phot) # for variance ~ flux
+            S2 = np.sum(synphot**2/phot**2)
+        elif err == 'sqrt':
+            S = np.sum(synphot)
+            S2 = np.sum(synphot**2/phot)
+        else:
+            S = np.sum(synphot**2/std**2)
+            S2 = np.sum(synphot*phot/std**2)
         normfac = S/S2
-        # normfac = np.sum(phot*synphot) / np.sum(synphot**2)
         normsynphot = normfac*synphot
-        residuals = (phot - normsynphot)/phot
-        # residuals = (phot - normsynphot)
-        if err == 'adaptive':
-            std = np.sqrt(np.mean(residuals**2))
+        if err == 'constSN':
+            const2 = np.sum((normsynphot - phot)**2/phot**2)/2/len(phot)
+            std = np.sqrt(const2)*phot
+        elif err == 'sqrt':
+            const2 = np.sum((normsynphot - phot)**2/phot)/2/len(phot)
+            std = np.sqrt(const2*phot)
+        normed_residuals = (phot - normsynphot)/std
         if clean:
             cut_prob_single_pt = 1 - (1 - cut_prob_all_pts)**(1.0/len(phot))
             cut_std = pdfutils.inv_gauss_cdf(cut_prob_single_pt)
-            keep = abs(residuals)/std < cut_std
+            keep = abs(normed_residuals) < cut_std
             if np.all(keep):
                 break
             vp, phot, synphot = vp[keep], phot[keep], synphot[keep]
@@ -469,12 +477,8 @@ def norm2photometry(spec, photom_tbl=None, band_dict=None, silent=False, plotfit
     if return_tbl_and_err:
         return tbl, std
 
-    # normfac_err = std*normfac/np.sqrt(len(phot))
-    normfac_err = std/np.sqrt(np.sum(synphot**2))
-    # normfac_err = std/np.sqrt(S2)
+    normfac_err = 1.0/np.sqrt(np.sum((synphot/std)**2))
     synphot, synphot_err = synphot*normfac, synphot*normfac_err
-    normed_residuals = (phot - synphot)/(phot*std)
-    # normed_residuals = (phot - synphot)/(std)
     if not silent:
         print "spectrum normalized by {:.2e} with a {:.1f}% uncertainty".format(normfac, 100*normfac_err/normfac)
 
@@ -501,14 +505,13 @@ def norm2photometry(spec, photom_tbl=None, band_dict=None, silent=False, plotfit
         w, fnu = w[keep], fnu[keep]
         N = len(fnu)/1000
         if N > 1:
-            fnu = mnp.smooth(fnu, N, safe=False)
-            w, fnu = w[N/2::N], fnu[::N]
+            fnu = mnp.smooth(fnu, N, safe=False)[::N]
+            w = mnp.smooth(w, N, safe=False)[::N]
         ax0.plot(w, fnu*normfac, '-k')
         ax0.fill_between(w, fnu*(normfac - normfac_err), fnu*(normfac + normfac_err), edgecolor='none', color='k',
                          alpha=0.3)
         ax0.plot((const.c/outliers['sed_freq']).to(u.AA).value, outliers['sed_flux'], 'rx')
-        ax0.errorbar(wp, phot, std*phot, fmt='.', color='g', capsize=0)
-        # ax0.errorbar(wp, phot, std, fmt='.', color='g', capsize=0)
+        ax0.errorbar(wp, phot, std, fmt='.', color='g', capsize=0)
         ax0.plot(wp, synphot, 'k+', ms=10)
         ax0.set_yscale('log')
         ax0.set_xscale('log')
@@ -530,7 +533,7 @@ def norm2photometry(spec, photom_tbl=None, band_dict=None, silent=False, plotfit
         plt.draw()
 
     if return_ln_like:
-        return -np.sum(0.5*normed_residuals**2)
+        return -np.sum(0.5*np.log(2*np.pi) + np.log2(std) + 0.5*normed_residuals**2)
     else:
         return normfac, normfac_err
 
@@ -746,12 +749,15 @@ def splice(spectbla, spectblb):
     return spec
 
 
-def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime',
-          silent=False):
+def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime',exptime='sum',  silent=False):
     """Coadd spectra in spectbls. weights can be 'exptime' or 'error'"""
     inst = __same_instrument(spectbls)
     # star = __same_star(spectbls)
     star = spectbls[0].meta['STAR']
+
+    # split spectra at gaps to avoid removing the gaps
+    temp = map(utils.gapsplit, spectbls)
+    spectbls = sum(temp, [])
 
     sourcefiles = [s.meta['FILENAME'] for s in spectbls]
 
@@ -774,6 +780,7 @@ def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime',
     else:
         cwe, cf, ce, cexpt, dq = specutils.coadd(we, f, e, weights, dq)
 
+
     data = [inst, start, end]
     funcs = ['or', 'min', 'max']
     basevals = [0, np.inf, -np.inf]
@@ -784,6 +791,8 @@ def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime',
     cinst, cstart, cend = map(specialcoadder, data, funcs, basevals)
     cnorm = np.ones(len(cwe) - 1)
     cw0, cw1 = cwe[:-1], cwe[1:]
+    if exptime == 'pass':
+        cexpt = specialcoadder(expt, 'max', 0.0)
 
     goodbins = (cexpt > 0)
     data = [v[goodbins] for v in [cw0, cw1, cf, ce, cexpt, dq, cinst, cnorm, cstart, cend]]
@@ -801,6 +810,7 @@ def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime',
         assert np.all(spectbl['maxobsdate'] >= spectbl['minobsdate'])
 
     if savefits:
+        if type(savefits) is str: cfile = savefits
         io.writefits(spectbl, cfile, overwrite=True)
         spectbl.meta['FILENAME'] = cfile
         if not silent: print 'coadd saved to \n\t{}'.format(cfile)
@@ -822,27 +832,36 @@ def auto_coadd(star, configs=None, silent=False):
             groups.append(files)
 
     for group in groups:
-        spectbls = sum(map(io.read, group), [])
-        if len(spectbls) == 1:
-            if not silent:
-                print ('single spectrum for {}, moving on'
-                       ''.format(spectbls[0].meta['NAME']))
-            continue
         if not silent:
-            names = [s.meta['NAME'] for s in spectbls]
+            names = [os.path.basename(f) for f in group]
             print 'coadding the spectra \n\t{}'.format('\n\t'.join(names))
         echelles = map(utils.isechelle, group)
         if any(echelles):
-            weights = 'error'
             if not silent:
-                print 'some files are echelles, so weighting by 1/error**2'
+                print 'some files are echelles, so weighting orders by 1/error**2 and then spectra by exptime'
+            spectbls = []
+            for f in group:
+                orders = io.read(f)
+                spec = coadd(orders, savefits=False, weights='error', exptime='pass', silent=silent)
+                spec.meta['FILENAME'] = f
+                spec.meta['NAME'] = orders[0].meta['NAME']
+                spectbls.append(spec)
         else:
-            weights = 'exptime'
+            spectbls = io.read(group)
+        if len(spectbls) == 1:
+            if any(echelles):
+                path = db.coaddpath(group[0])
+                if not silent:
+                    print 'single echelle spectrum, saving to {}'.format(path)
+                io.writefits(spectbls[0], path, overwrite=True)
+            else:
+                if not silent:
+                    print 'single spectrum for {}, moving on'.format(spectbls[0].meta['NAME'])
+            continue
+        else:
             if not silent:
-                print 'weighting by exposure time'
-
-        if len(spectbls) > 1:
-            coadd(spectbls, savefits=True, weights=weights, silent=silent)
+                print 'weighting by exposure time and coadding'
+            coadd(spectbls, savefits=True, weights='exptime', exptime='sum', silent=silent)
 
 
 def phxspec(Teff, logg=4.5, FeH=0.0, aM=0.0, repo=rc.phxrepo):
@@ -874,7 +893,7 @@ def phxspec(Teff, logg=4.5, FeH=0.0, aM=0.0, repo=rc.phxrepo):
     return utils.list2spectbl(data)
 
 
-def auto_phxspec(star, Teff='oldfit', silent=False):
+def auto_phxspec(star, Teff='oldfit', silent=False, err='constSN'):
     kwds = {}
     for key in ['logg', 'FeH', 'aM']:
         val = rc.starprops[key][star]
@@ -890,25 +909,27 @@ def auto_phxspec(star, Teff='oldfit', silent=False):
         def ln_like(Teff):
             spec = phxspec(Teff, **kwds)
             return norm2photometry(spec, photom_tbl=tbl, band_dict=band_dict, silent=True, plotfit=False,
-                                   return_ln_like=True, clean=True)
-        if not silent: "Finding Teff that best fits photometry."
+                                   return_ln_like=True, clean=True, err=err)
+        if not silent: "Finding Teff that best fit photometry."
         result = opt.minimize_scalar(lambda Teff: -ln_like(Teff), bracket=[Tlit-Tlit_err, Tlit+Tlit_err],
-                                     bounds=[Tlit-500, Tlit+500], method='bounded', options={'disp': (not silent)})
+                                     bounds=[Tlit-500, Tlit+500], method='bounded', options={'disp': (not silent),
+                                                                                             'xtol': 10.})
         Teff = result.x
         spec = phxspec(Teff, **kwds)
         if not silent: print "Best fit Teff of {:.0f} found. Finding confidence interval.".format(Teff)
 
         # cull outliers for optimal solution, then find error bars using error bars and points from optimal solution
-        tbl, err = norm2photometry(spec, photom_tbl=tbl, band_dict=band_dict, silent=True, plotfit=False,
-                                   return_tbl_and_err=True, clean=True)
+        tbl, uncts = norm2photometry(spec, photom_tbl=tbl, band_dict=band_dict, silent=True, plotfit=False,
+                                   return_tbl_and_err=True, clean=True, err=err)
         def constrained_like(Teff):
             spec = phxspec(Teff, **kwds)
             return norm2photometry(spec, photom_tbl=tbl, band_dict=band_dict, silent=True, plotfit=False,
-                                   return_ln_like=True, err=err)
+                                   return_ln_like=True, err=uncts)
         N = 201
         for dT in range(100,2001,100):
             try:
-                Tlim = opt.brentq(lambda T: constrained_like(T) + result.fun + 3, Teff, Teff+dT)
+                # remember result.fun is negative log like
+                Tlim = opt.brentq(lambda T: (result.fun + 2) + constrained_like(T), Teff, Teff+dT)
                 break
             except ValueError:
                 continue
@@ -939,8 +960,8 @@ def auto_phxspec(star, Teff='oldfit', silent=False):
     spec = phxspec(Teff, **kwds)
     spec.meta['STAR'] = star
     spec.meta['Teff'] = Teff
-    spec.meta['Terrneg'] = Teff - T0
-    spec.meta['Terrpos'] = T1 - Teff
+    spec.meta['Terrneg'] = Teff - T0 if Teff in ['fit', 'oldfit'] else np.nan
+    spec.meta['Terrpos'] = T1 - Teff if Teff in ['fit', 'oldfit'] else np.nan
     path = rc.phxpath(star)
     spec.meta['NAME'] = db.parse_name(path)
     if not silent:
