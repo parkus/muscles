@@ -150,6 +150,11 @@ def readstdfits(specfile):
             spectbl.rename_column(col, col.lower())
         spectbl.rename_column('wavelength0', 'w0')
         spectbl.rename_column('wavelength1', 'w1')
+        spectbl.rename_column('dq', 'flags')
+        spectbl.rename_column('expstart', 'minobsdate')
+        spectbl.rename_column('expend', 'maxobsdate')
+        spectbl.meta['STAR'] = db.parse_star(specfile)
+        spectbl.meta['COMMENT'] = ''
     else:
         spectbl = utils.conform_spectbl(spectbl)
 
@@ -265,7 +270,7 @@ def readtxt(specfile):
     Reads data from text files into standardized astropy table output.
     """
 
-    if 'young' in specfile.lower():
+    if 'youn' in specfile.lower():
         data = np.loadtxt(specfile)
         if data.shape[1] == 3:
             wmid, f, _ = data.T
@@ -715,7 +720,7 @@ def writehlsp(star_or_spectbl, components=True):
                     'right/red edge of the wavelength bin',
                     'average flux over the bin']
     fitsnames = ['WAVELENGTH', 'WAVELENGTH0', 'WAVELENGTH1', 'FLUX']
-    fmts = ['E']*4
+    fmts = ['D']*4
 
     if 'mod' not in name:
         cols.extend(['error', 'exptime', 'flags', 'minobsdate', 'maxobsdate'])
@@ -725,7 +730,7 @@ def writehlsp(star_or_spectbl, components=True):
                              'modified julian date of start of first exposure',
                              'modified julian date of end of last exposure'])
         fitsnames.extend(['ERROR', 'EXPTIME', 'DQ', 'EXPSTART', 'EXPEND'])
-        fmts.extend(['E']*2 + ['I'] + ['D']*2)
+        fmts.extend(['D']*2 + ['I'] + ['D']*2)
 
     if pan:
         # add a normalized flux column
@@ -740,7 +745,7 @@ def writehlsp(star_or_spectbl, components=True):
                              'flux density normalized by the bolometric flux',
                              'error on bolometrically-normalized flux density'])
         fitsnames.extend(['INSTRUMENT', 'NORMFAC', 'BOLOFLUX', 'BOLOERR'])
-        fmts.extend(['J', 'E', 'D', 'D'])
+        fmts.extend(['J', 'D', 'D', 'D'])
 
     for i, desc in enumerate(descriptions):
         spechdr['TDESC' + str(i+1)] = desc

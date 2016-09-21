@@ -566,28 +566,34 @@ def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
     """
 
     # if there are zeros or nans for errors in one spectrum but not the other, delete portions as appropriate
-    def groom(speca, specb):
+    def groom(speca, specb, safe):
         getgood = lambda spec: np.isfinite(spec['error']) & (spec['error'] > 0)
         bada = ~getgood(speca)
         badrangesa = specutils.flags2ranges(utils.wbins(speca), bada)
+        arange = utils.gapless_ranges(speca)
         if not np.any(badrangesa):
             return speca
-        goodb = getgood(specb)
-        goodrangesb = specutils.flags2ranges(utils.wbins(specb), goodb)
-        cutranges = mnp.range_intersect(badrangesa, goodrangesb)
-        if len(cutranges) == 0:
-            return speca
-        fullrange = [[speca['w0'][0], speca['w1'][-1]]]
-        keepranges = mnp.rangeset_subtract(fullrange, cutranges)
-        if len(keepranges) == 0:
-            return None
-        return utils.keepranges(speca, keepranges)
-    both = [spectbla, spectblb]
-    spectbla, spectblb = map(groom, both, both[::-1])
-    assert not (spectbla is None and spectblb is None)
-    if spectbla is None:
+        elif safe:
+            goodb = getgood(specb)
+            goodrangesb = specutils.flags2ranges(utils.wbins(specb), goodb)
+            cutranges = mnp.range_intersect(badrangesa, goodrangesb)
+            if len(cutranges) == 0:
+                return speca
+            keepranges = mnp.rangeset_subtract(arange, cutranges)
+            return utils.keepranges(speca, keepranges, ends='exact')
+        else:
+            brange = utils.gapless_ranges(specb)
+            cutranges = mnp.range_intersect(brange, badrangesa)
+            if len(cutranges) == 0:
+                return speca
+            keepranges = mnp.rangeset_subtract(arange, cutranges)
+            return utils.keepranges(speca, keepranges, ends='exact')
+    spectbla = groom(spectbla, spectblb, safe=True)
+    spectblb = groom(spectblb, spectbla, safe=False)
+    assert not (len(spectbla) == 0 and len(spectblb) == 0)
+    if len(spectbla) == 0:
         return spectblb
-    if spectblb is None:
+    if len(spectblb) == 0:
         return spectbla
 
     # sort the two spectra

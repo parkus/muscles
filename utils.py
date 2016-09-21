@@ -350,6 +350,9 @@ def keepranges(spectbl, *args, **kwargs):
     just for ends={'tight'|'loose'}"""
     keep = argrange(spectbl, *args, **kwargs)
 
+    if not np.any(keep):
+        return spectbl[keep]
+
     if 'ends' in kwargs and kwargs['ends'] == 'exact':
         rngs = args[0] if len(args) == 1 else args
         # for speed, trim the spectrum to start
@@ -392,9 +395,9 @@ def argrange(spec_or_bins, *args, **kwargs):
         ends = kwargs['ends']
     else:
         ends = 'tight'
-    wranges = args[0] if len(args) == 1 else args
-    wranges = np.reshape(wranges, [-1, 2])
-
+    wranges = np.reshape(args, [-1, 2])
+    if  len(args) == 0:
+        return np.zeros(len(w0), bool)
     inrange = np.zeros(len(spec_or_bins), bool)
     for wr in wranges:
         if ends == 'loose':
@@ -676,7 +679,8 @@ def _handle_bin_remainder(we, end, keep_remainder):
             we[-2] = end
             we = we[:-1]
     else:
-        we = we[:-1]
+        if we[-1] != end:
+            we = we[:-1]
     return we
 
 
