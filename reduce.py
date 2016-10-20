@@ -926,7 +926,7 @@ def phxspec(Teff, logg=4.5, FeH=0.0, aM=0.0, repo=rc.phxrepo):
     return utils.list2spectbl(data)
 
 
-def auto_phxspec(star, Teff='oldfit', silent=False, err='constSN'):
+def auto_phxspec(star, Teff='oldfit', silent=False, err='constSN', fitspec=None):
     kwds = {}
     for key in ['logg', 'FeH', 'aM']:
         val = rc.starprops[key][star]
@@ -934,7 +934,8 @@ def auto_phxspec(star, Teff='oldfit', silent=False, err='constSN'):
             kwds[key] = val
     Tlit = rc.starprops['Teff'][star]
     Tlit_err = rc.starprops.errpos['Teff'][star]
-    if Teff == 'fit':
+
+    if Teff == 'fit' and fitspec is None:
         # load in photometry data
         tbl, band_dict = io.get_photometry(star, rc.vis[0], 55000.0)
 
@@ -963,6 +964,73 @@ def auto_phxspec(star, Teff='oldfit', silent=False, err='constSN'):
             try:
                 # remember result.fun is negative log like
                 Tlim = opt.brentq(lambda T: (result.fun + 2) + constrained_like(T), Teff, Teff+dT)
+                break
+            except ValueError:
+                continue
+        dT = Tlim - Teff
+        Tlo = max(2300, Teff - dT)
+        Tgrid = np.linspace(Tlo, Teff+dT, N)
+        Lgrid = np.exp(map(ln_like, Tgrid))
+        Igrid = np.cumsum(np.diff(Tgrid)*mnp.midpts(Lgrid))
+        Imid = Igrid[N/2]
+        I = Igrid[-1]
+        dI = I*0.683/2
+        I0, I1 = Imid - dI, Imid + dI
+        T0, T1 = np.interp([I0, I1], Igrid, mnp.midpts(Tgrid))
+        if not silent: print ("Best-fit phoenix spectrum found with Teff = {:.0f} ({:.0f}-{:.0f}) comapred to "
+                              "literature value of {:.0f}. Saving.".format(Teff, T0, T1, Tlit))
+    if Teff == 'fit' and fitspec is not None:
+
+        buffer = 100.
+        dw = np.mean(fitspec['w1'] - fitspec['w0'])
+        fitspec = utils.evenbin(fitspec, dw)
+        bins = utils.bins2edges(utils.wbins(fitspec))
+        bins_end = np.arange(dw, buffer+dw, dw) + bins[-1]
+        bins_beg = np.arange(-buffer, 0, dw) + bins[0]
+        bins_buffered = np.hstack([bins_beg, bins, bins_end])
+        bins_buffered = utils.edges2bins(bins_buffered)
+
+        def ln_like(Teff):
+            spec = phxspec(Teff, **kwds)
+
+            # trim with some buffer
+            spec = utils.rebin(spec, bins_buffered)
+
+            # roughly normalize
+            fac, _ = normalize(fitspec, spec, safe=False, silent=True)
+            spec['flux'] *= fac
+
+            # align wavelengths and cut out appropriate piece of spec
+            offset = mnp.align(spec['flux'], fitspec['flux'])
+            assert offset >= 0
+            assert offset < len(spec) - len(fitspec)
+            i0, i1 = offset, offset + len(fitspec)
+            spec = spec[i0:i1]
+
+            # normalize again, more precise now that specs are aligned
+            fac, _ = normalize(fitspec, spec, safe=False, silent=True)
+            spec['flux'] *= fac
+
+            # compute ln like
+            terms = -(spec['flux'] - fitspec['flux'])**2/2/fitspec['err']**2
+            return np.sum(-np.log(np.sqrt(2*np.pi)*fitspec['err']) + terms)
+
+        if not silent: print "Finding Teff that best fit the provided spectrum."
+        result = opt.minimize_scalar(lambda Teff: -ln_like(Teff), bracket=[Tlit-Tlit_err, Tlit+Tlit_err],
+                                     bounds=[Tlit-500, Tlit+500], method='bounded', options={'disp': (not silent),
+                                                                                             'xtol': 10.})
+        Teff = result.x
+        spec = phxspec(Teff, **kwds)
+        if not silent: print "Best fit Teff of {:.0f} found. Finding confidence interval.".format(Teff)
+
+        # cull outliers for optimal solution, then find error bars using error bars and points from optimal solution
+        tbl, uncts = norm2photometry(spec, photom_tbl=tbl, band_dict=band_dict, silent=True, plotfit=False,
+                                   return_tbl_and_err=True, clean=True, err=err)
+        N = 201
+        for dT in range(100,2001,100):
+            try:
+                # remember result.fun is negative log like
+                Tlim = opt.brentq(lambda T: (result.fun + 2) + ln_like(T), Teff, Teff+dT)
                 break
             except ValueError:
                 continue
