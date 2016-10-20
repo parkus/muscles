@@ -15,7 +15,7 @@ from astropy.io import fits
 from pandas import read_json
 import scicatalog.scicatalog as sc
 
-version = '11'
+version = '20'
 
 # new mac
 gdrive = '/Users/rolo7566/Google Drive'
@@ -172,13 +172,15 @@ airglow_ranges = np.loadtxt(airglow_path, delimiter=',')
 # -----------------------------------------------------------------------------
 # "SETTINGS"
 
+
 def seriousdqs(path):
     if '_cos_' in path:
         return fits.getval(path, 'sdqflags', 1)
     if '_sts_' in path:
         return (1 | 2 | 4 | 128 | 256 | 512 | 4096 | 8192)
-    else:
-        raise NotImplementedError('No serious dq flags defined for config\n{}'.format(path))
+    if '_fos_' in path:
+        return (800 | 700 | 400 | 300 | 200 | 100 | 16)
+    raise NotImplementedError('No serious dq flags defined for config\n{}'.format(path))
 spectbl_format =  {'units' : ['Angstrom']*2 + ['erg/s/cm2/Angstrom']*2 + ['s','','','','d','d'],
                    'dtypes' : ['f8']*5 + ['i2', 'i4'] + ['f8']*3,
                    'fmts' : ['.2f']*2 + ['.2e']*2 + ['.1f', 'b', 'd', '.2f', '.2f', '.2f'],
@@ -200,7 +202,7 @@ stdbands = read_json(stdbandpath)
 
 # prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m', 'sts_g430l', 'sts_g430m', 'mod_apc']
 prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m', 'cos_g230l', 'mod_phx', 'mod_apc']
-normranges = {'hst_sts_g430l':[3500.,10000.]}
+normranges = {'hst_sts_g430l':[3500., 5700.]}
 
 lyacut = [1209.5, 1222.0]
 panres = 1.0
@@ -214,14 +216,19 @@ flare_bands = {#'hst_cos_g130m' : [[1169.5 , 1198.5 ], [1201.7 , 1212.17], [1219
                'hst_cos_g130m' : [[1324.83, 1426.08]],
                'hst_cos_g160m' : [[1422.92, 1563.85], [1614.02, 1754.01]]}
 
-specstrings = ['x1d', 'mod_euv', 'mod_lya', 'spec', 'sx1', 'mod_phx', 'coadd']
+specstrings = ['x1d', 'mod_euv', 'mod_lya', 'spec', 'sx1', 'mod_phx', 'coadd', 'c1f']
 
 #listed in normalization order
 instruments = ['hst_cos_g130m','hst_cos_g160m','hst_cos_g230l','hst_sts_g140m','hst_sts_e140m','hst_sts_e230m',
                'hst_sts_e230h','hst_sts_g230l','hst_sts_g430l','hst_sts_g430m','mod_gap_fill-',
                'xmm_epc_multi','xmm_epc_pn---', 'cxo_acs_-----', 'mod_euv_young', 'mod_apc_-----',
-               'mod_lya_young', 'mod_phx_-----', 'oth_---_other', 'hst_sts_g230lb', 'hst_sts_g750l']
+               'mod_lya_young', 'mod_phx_-----', 'oth_---_other', 'hst_sts_g230lb', 'hst_sts_g750l', 'hst_fos_g570h',
+               'hst_fos_g780h']
 instvals = [2**i for i in range(len(instruments))]
+default_order = ['hst_cos_g130m','hst_cos_g160m','hst_cos_g230l','hst_sts_g140m','hst_sts_e140m','hst_sts_e230m',
+                 'hst_sts_e230h','hst_sts_g230l', 'hst_sts_g230lb', 'xmm_epc_multi','xmm_epc_pn---', 'cxo_acs_-----',
+                 'mod_euv_young', 'mod_apc_-----', 'mod_lya_young', 'mod_phx_-----', 'hst_sts_g750l', 'hst_sts_g430l',
+                 'hst_sts_g430m']
 
 # for use in making plots
 instranges = {'xobs': [5., 60.], 'xmm': [5., 60.], 'cxo': [1.0, 2.0], 'euv': [100., 1170.], 'hst': [1170., 5700.],
@@ -239,10 +246,11 @@ instabbrevs = {'xobs':'XMM or Chandra', 'apec':'APEC', 'euv':'Empirical EUV Esti
 # for use in making FITS headers
 HLSPtelescopes = {'hst':'HST', 'cxo':'CXO', 'xmm':'XMM', 'mod':'MODEL', 'oth':'OTHER'}
 HLSPinstruments = {'cos':'COS', 'sts':'STIS', 'euv':'EUV-SCALING', 'lya':'LYA-RECONSTRUCTION', 'phx':'PHX',
-                   'epc':'EPIC', 'gap':'POLYNOMIAL-FIT', 'apc':'APEC', '---':'NA', 'acs':'ACIS'}
+                   'epc':'EPIC', 'gap':'POLYNOMIAL-FIT', 'apc':'APEC', '---':'NA', 'acs':'ACIS', 'fos':'FOS'}
 HLSPgratings = {'g130m':'G130M', 'g160m':'G160M', 'g430l':'G430L', 'g430m':'G430M', 'g140m':'G140M', 'e230m':'E230M',
                 'e230h':'E230H', 'g230l':'G230L', 'e140m':'E140M', 'fill-':'NA', '-----':'NA', 'young':'NA',
-                'pn---':'PN', 'multi':'MULTI', 'other':'NA', 'g750l':'G750L', 'g230lb':'G230LB'}
+                'pn---':'PN', 'multi':'MULTI', 'other':'NA', 'g750l':'G750L', 'g230lb':'G230LB', 'g570h':'g570H',
+                'g780h':'G780H'}
 
 
 def getinststr(inst_val):
@@ -305,6 +313,7 @@ class StarSettings:
         self.norm_order = []
         self.prenormed = []
         self.weird_norm = {}
+        self.order = []
 
     def add_wave_offset(self, config, offset):
         self.wave_offsets['configs'].append(config)
@@ -413,4 +422,5 @@ def loadsettings(star):
     ss.prenormed = safeget('prenormed')
     ss.weird_norm = safeget('weird_norm')
     ss.wave_offsets = safeget('wave_offsets')
+    ss.order = safeget('order')
     return ss
