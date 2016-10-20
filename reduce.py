@@ -110,6 +110,15 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr=
             ends = 'loose' if 'cos_g130m' in names[i] else 'tight'
             specs[i] = utils.keepranges(specs[i], goodranges, ends=ends)
 
+    # adjust wavelenghts as specified
+    for i in range(len(specs)):
+        offset = sets.get_wave_offset(names[i])
+        if offset is not None:
+            if not silent:
+                print ('adjusting wavelengt of {} by {}'.format(names[i], offset))
+            specs[i]['w0'] += offset
+            specs[i]['w1'] += offset
+
     # remove airglow lines from COS
     if not silent:
         print '\n\tremoving airglow from G130M spectrum'
@@ -143,16 +152,14 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr=
         if 'mod_phx' in names[i]:
             specs[i] = utils.split_exact(specs[i], 2500., 'red')
 
-    # reorder spectra so that phoenix is spliced in before 430 and 750 spectra
-    for cen in ['430', '750']:
-        try:
-            i = index(cen)
-            temp = specs[i]
-            specs.remove(temp)
-            specs.append(temp)
-        except AssertionError:
-            pass
-    names = [s.meta['NAME'] for s in specs]
+    # reorder spectra according to how they should be spliced
+    order = sets.order if len(sets.order) else rc.default_order
+    def order_index(spec):
+        name = spec.meta['NAME']
+        inst = db.parse_info(name, 1, 4)
+        return order.index(inst)
+    specs = sorted(specs, key=order_index)
+    names = [spec.meta['NAME'] for spec in specs]
 
     # normalize and splice according to input order
     spec = specs[0]
@@ -187,6 +194,12 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr=
                     if not silent:
                         print '\tnormalizing within the overlap'
                     normranges = sets.get_norm_range(name)
+                    config = db.parse_info(name, 1, 4)
+                    if config in rc.normranges:
+                        if normranges is None:
+                            normranges = rc.normranges[config]
+                        else:
+                            raise ValueError('Uh oh. Conflicting norm ranges. One in rc and one in star settings.')
                     if normranges is None:
                         normspec = addspec
                     else:
@@ -456,11 +469,11 @@ def norm2photometry(spec, photom_tbl=None, band_dict=None, silent=False, plotfit
         normfac = S/S2
         normsynphot = normfac*synphot
         if err == 'constSN':
-            const2 = np.sum((normsynphot - phot)**2/phot**2)/2/len(phot)
-            std = np.sqrt(const2)*phot
+            const2 = np.sum((normsynphot - phot)**2/normsynphot**2)/2/len(phot)
+            std = np.sqrt(const2)*normsynphot
         elif err == 'sqrt':
-            const2 = np.sum((normsynphot - phot)**2/phot)/2/len(phot)
-            std = np.sqrt(const2*phot)
+            const2 = np.sum((normsynphot - phot)**2/normsynphot)/2/len(phot)
+            std = np.sqrt(const2*normsynphot)
         normed_residuals = (phot - normsynphot)/std
         if clean:
             cut_prob_single_pt = 1 - (1 - cut_prob_all_pts)**(1.0/len(phot))
@@ -598,7 +611,6 @@ def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
 
     # sort the two spectra
     both = [spectbla, spectblb]
-    both0 = [spectbla, spectblb]
     key = lambda s: s['w0'][0]
     both.sort(key=key)
     spec0, spec1 = both
@@ -628,12 +640,11 @@ def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
         specsa, specsb = map(utils.gapsplit, both)
         specsa.sort(key=key)
         specsb.sort(key=key)
-        spec = specsa[0]
+        spec = specsa.pop(0)
         while len(specsa) > 0:
             ospecs = filter(lambda s: utils.overlapping(spec, s), specsb)
-            for ospec in ospecs:
-                spec = smartsplice(spec, ospec)
-                specsb.remove(ospec)
+            while len(ospecs):
+                spec = smartsplice(spec, ospecs.pop(0))
             spec = smartsplice(specsa.pop(0), spec)
         spec = reduce(splice, specsb, spec)
         assert np.all(spec['w0'][1:] > spec['w0'][:-1])
@@ -734,6 +745,12 @@ def splice(spectbla, spectblb):
     """
     # if spectrum b has gaps, divide it up and add the pieces it into spectbla
     # separately
+
+    if len(spectbla) == 0:
+        return spectblb
+    if len(spectblb) == 0:
+        return spectbla
+
     if utils.hasgaps(spectblb):
         bspecs = utils.gapsplit(spectblb)
         return reduce(splice, bspecs, spectbla)
