@@ -44,7 +44,7 @@ def findsimilar(specfile, newstring):
     """Find a file with the same identifier as sepcfile, but that also contains
     newstring in the file name. For example, find the the coadd version of the
     u_hst_cos_g130m_gj832 observation."""
-    base = parse_id(specfile)
+    base = parse_info(specfile, 0, 6)
     dirname = os.path.dirname(specfile)
     names = findfiles(dirname, base, newstring)
     paths = [os.path.join(dirname, n) for n in names]
@@ -65,6 +65,10 @@ def choosesourcespecs(specfiles):
 
     # remove any non-spec files
     specfiles = filter(isspec, specfiles)
+
+    for i, s in enumerate(specfiles):
+        if os.path.getsize(s) == 0:
+            specfiles[i] = s.replace('x1d', 'x2d')
 
     return specfiles
 

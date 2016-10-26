@@ -348,22 +348,21 @@ def keepranges(spectbl, *args, **kwargs):
     """Returns a table with only bins that are fully within the wavelength
     ranges. *args can either be a Nx2 array of ranges or w0, w1. **kwargs
     just for ends={'tight'|'loose'}"""
-    keep = argrange(spectbl, *args, **kwargs)
-
-    if not np.any(keep):
-        return spectbl[keep]
-
     if 'ends' in kwargs and kwargs['ends'] == 'exact':
         rngs = args[0] if len(args) == 1 else args
         # for speed, trim the spectrum to start
         spectbl = keepranges(spectbl, rngs, ends='loose')
+        if len(spectbl) == 0:
+            return spectbl
         rngs = np.reshape(rngs, [-1, 2])
         specs = []
         for rng in rngs:
             _spec = split_exact(spectbl, rng[0], 'red')
             _spec = split_exact(_spec, rng[1], 'blue')
             specs.append(_spec)
-        return vstack(specs)
+        return vstack(specs, name=specs[0].meta['NAME'])
+
+    keep = argrange(spectbl, *args, **kwargs)
 
     return spectbl[keep]
 
@@ -814,3 +813,11 @@ def killnegatives(spectbl, sep_insts=False, quickndirty=True):
         bins = np.array([w0, w1]).T
         return rebin(spectbl, bins)
 
+
+def compare_specs(spec_new, spec_old, savetxt=None):
+    spec_new_rebinned = rebin(spec_new, wbins(spec_old))
+    ratio = spec_new_rebinned['flux']/spec_old['flux']
+    oldcols = [spec_old[s] for s in ['w0', 'w1', 'instrument']]
+    spec_compare = Table(oldcols + [ratio] + [spec_new_rebinned['instrument']],
+                         names=['w0', 'w1','inst_old', 'ratio', 'inst_new'])
+    return spec_compare

@@ -138,12 +138,15 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr=
         return names.index(name[0])
 
     # normalize PHX to photometry
-    if not silent: print 'normalizing phoenix to photometry'
-    iphx = index('phx')
-    phxnorm, phxerr = norm2photometry(specs[iphx], silent=silent, plotfit=False, clean=True, err=phxnormerr)
-    specs[iphx]['flux'] *= phxnorm
-    specs[iphx]['normfac'] = phxnorm
-    rc.normfacs[star]['mod_phx_-----'] = phxnorm, phxerr
+    if 'mod_phx_-----' not in sets.weird_norm:
+        if not silent: print 'normalizing phoenix to photometry'
+        iphx = index('phx')
+        phxnorm, phxerr = norm2photometry(specs[iphx], silent=silent, plotfit=False, clean=True, err=phxnormerr)
+        specs[iphx]['flux'] *= phxnorm
+        specs[iphx]['normfac'] = phxnorm
+        rc.normfacs[star]['mod_phx_-----'] = phxnorm, phxerr
+        if 'mod_phx_-----' not in sets.prenormed:
+            sets.prenormed.append('mod_phx_-----')
 
     # trim PHX models so they aren't used to fill small gaps in UV data
     if not silent:
@@ -161,7 +164,7 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr=
     specs = sorted(specs, key=order_index)
     names = [spec.meta['NAME'] for spec in specs]
 
-    # normalize and splice according to input order
+    # normalize and splice
     spec = specs[0]
     if not silent:
         print '\nstarting stitched spectrum with {}'.format(spec.meta['NAME'])
@@ -177,13 +180,18 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr=
         inst = db.parse_instrument(name)
         if not rc.dontnormalize(addspec):
             if inst in sets.weird_norm:
-                refinst = sets.weird_norm[inst]
-                if not silent:
-                    print 'normalizing {} spec using the same factor as that used for the {} spec'.format(inst, refinst)
-                refspec = filter(lambda spec: refinst in spec.meta['NAME'], specs)
-                assert len(refspec) == 1
-                refspec = refspec[0]
-                normfac, normerr = refspec[0]['normfac'], np.nan
+                refinst_or_fac = sets.weird_norm[inst]
+                if type(refinst_or_fac) is str:
+                    refinst = refinst_or_fac
+                    if not silent:
+                        print 'normalizing {} spec using the same factor as that used for the {} spec'.format(inst, refinst)
+                    refspec = filter(lambda spec: refinst in spec.meta['NAME'], specs)
+                    assert len(refspec) == 1
+                    refspec = refspec[0]
+                    normfac, normerr = refspec[0]['normfac'], np.nan
+                else:
+                    print 'normalizing {} inst by {} as sepcified in sets.werid_norm for this star.'.format(inst, refinst_or_fac)
+                    normfac, normerr = refinst_or_fac, np.nan
             else:
                 overlap = utils.overlapping(spec, addspec)
                 if not overlap:
@@ -788,13 +796,22 @@ def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime',exptime=
     # star = __same_star(spectbls)
     star = spectbls[0].meta['STAR']
 
+    if maskbaddata:
+        newlist = []
+        for i, spectbl in enumerate(spectbls):
+            mask = rc.seriousdqs(spectbl.meta['FILENAME'])
+            keep = (np.bitwise_and(spectbl['flags'], mask) == 0)
+            if np.sum(keep) > 0:
+                newlist.append(spectbl[keep])
+        return coadd(newlist, maskbaddata=False, savefits=savefits, weights=weights, exptime=exptime, silent=silent)
+
     # split spectra at gaps to avoid removing the gaps
     temp = map(utils.gapsplit, spectbls)
     spectbls = sum(temp, [])
 
     sourcefiles = [s.meta['FILENAME'] for s in spectbls]
 
-    listify = lambda s: [spec[s].data for spec in spectbls]
+    listify = lambda s: [spec[s].data.copy() for spec in spectbls]
     w0, w1, f, e, expt, dq, inst, normfac, start, end = map(listify, colnames)
     we = [np.append(ww0, ww1[-1]) for ww0, ww1 in zip(w0, w1)]
 
@@ -802,16 +819,8 @@ def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime',exptime=
         warn("Spectra with normfacs != 1.0 are being coadded.")
 
     weights = [1.0 / ee ** 2 for ee in e] if weights == 'error' else expt
-    if maskbaddata:
-        dqmasks = map(rc.seriousdqs, sourcefiles)
-        masks = __make_masks(we, dq, dqmasks)
-        for i in range(len(masks)):
-            start[i][masks[i]] = np.inf
-            end[i][masks[i]] = -np.inf
-            inst[i][masks[i]] = 0
-        cwe, cf, ce, cexpt, dq = specutils.coadd(we, f, e, weights, dq, masks)
-    else:
-        cwe, cf, ce, cexpt, dq = specutils.coadd(we, f, e, weights, dq)
+
+    cwe, cf, ce, cexpt, dq = specutils.coadd(we, f, e, weights, dq)
 
 
     data = [inst, start, end]
@@ -903,6 +912,7 @@ def phxspec(Teff, logg=4.5, FeH=0.0, aM=0.0, repo=rc.phxrepo):
     values for temperature, surface gravity, metallicity, and alpha metal
     content.
     """
+    Teff, logg, FeH, aM = map(float, [Teff, logg, FeH, aM])
     grids = [rc.phxTgrid, rc.phxggrid, rc.phxZgrid, rc.phxagrid]
     pt = [Teff, logg, FeH, aM]
 
@@ -926,7 +936,7 @@ def phxspec(Teff, logg=4.5, FeH=0.0, aM=0.0, repo=rc.phxrepo):
     return utils.list2spectbl(data)
 
 
-def auto_phxspec(star, Teff='oldfit', silent=False, err='constSN', fitspec=None):
+def auto_phxspec(star, Teff='oldfit', silent=False, err='constSN', fitspec=None, save=True):
     kwds = {}
     for key in ['logg', 'FeH', 'aM']:
         val = rc.starprops[key][star]
@@ -981,51 +991,28 @@ def auto_phxspec(star, Teff='oldfit', silent=False, err='constSN', fitspec=None)
                               "literature value of {:.0f}. Saving.".format(Teff, T0, T1, Tlit))
     if Teff == 'fit' and fitspec is not None:
 
-        buffer = 100.
-        dw = np.mean(fitspec['w1'] - fitspec['w0'])
-        fitspec = utils.evenbin(fitspec, dw)
-        bins = utils.bins2edges(utils.wbins(fitspec))
-        bins_end = np.arange(dw, buffer+dw, dw) + bins[-1]
-        bins_beg = np.arange(-buffer, 0, dw) + bins[0]
-        bins_buffered = np.hstack([bins_beg, bins, bins_end])
-        bins_buffered = utils.edges2bins(bins_buffered)
+        bins = utils.wbins(fitspec)
 
         def ln_like(Teff):
             spec = phxspec(Teff, **kwds)
 
             # trim with some buffer
-            spec = utils.rebin(spec, bins_buffered)
+            spec = utils.rebin(spec, bins)
 
-            # roughly normalize
-            fac, _ = normalize(fitspec, spec, safe=False, silent=True)
-            spec['flux'] *= fac
-
-            # align wavelengths and cut out appropriate piece of spec
-            offset = mnp.align(spec['flux'], fitspec['flux'])
-            assert offset >= 0
-            assert offset < len(spec) - len(fitspec)
-            i0, i1 = offset, offset + len(fitspec)
-            spec = spec[i0:i1]
-
-            # normalize again, more precise now that specs are aligned
+            # normalize
             fac, _ = normalize(fitspec, spec, safe=False, silent=True)
             spec['flux'] *= fac
 
             # compute ln like
-            terms = -(spec['flux'] - fitspec['flux'])**2/2/fitspec['err']**2
-            return np.sum(-np.log(np.sqrt(2*np.pi)*fitspec['err']) + terms)
+            terms = -(spec['flux'] - fitspec['flux'])**2/2/fitspec['error']**2
+            return np.sum(-np.log(np.sqrt(2*np.pi)*fitspec['error']) + terms)
 
-        if not silent: print "Finding Teff that best fit the provided spectrum."
+        if not silent: print "Finding Teff that best fits the provided spectrum."
         result = opt.minimize_scalar(lambda Teff: -ln_like(Teff), bracket=[Tlit-Tlit_err, Tlit+Tlit_err],
                                      bounds=[Tlit-500, Tlit+500], method='bounded', options={'disp': (not silent),
                                                                                              'xtol': 10.})
         Teff = result.x
-        spec = phxspec(Teff, **kwds)
         if not silent: print "Best fit Teff of {:.0f} found. Finding confidence interval.".format(Teff)
-
-        # cull outliers for optimal solution, then find error bars using error bars and points from optimal solution
-        tbl, uncts = norm2photometry(spec, photom_tbl=tbl, band_dict=band_dict, silent=True, plotfit=False,
-                                   return_tbl_and_err=True, clean=True, err=err)
         N = 201
         for dT in range(100,2001,100):
             try:
@@ -1065,9 +1052,10 @@ def auto_phxspec(star, Teff='oldfit', silent=False, err='constSN', fitspec=None)
     spec.meta['Terrpos'] = T1 - Teff if Teff in ['fit', 'oldfit'] else np.nan
     path = rc.phxpath(star)
     spec.meta['NAME'] = db.parse_name(path)
-    if not silent:
-        print 'writing spectrum to {}'.format(path)
-    io.writefits(spec, path, overwrite=True)
+    if save:
+        if not silent:
+            print 'writing spectrum to {}'.format(path)
+        io.writefits(spec, path, overwrite=True)
 
     return spec
 

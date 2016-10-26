@@ -15,7 +15,7 @@ import astropy.table as table
 from astropy.time import Time
 import astropy.units as u
 from warnings import warn
-import json
+import os
 
 legendcomment = ('This extension is a legend for the integer identifiers in the instrument column of the '
                   'spectrum extension. Instruments are identified by bitwise flags so that any combination of '
@@ -173,16 +173,25 @@ def readfits(specfile):
     if any([s in specfile for s in ['coadd', 'custom', 'mod', 'panspec', 'other', 'hlsp']]):
         return [readstdfits(specfile)]
     elif observatory == 'hst':
-        sd, sh = spec[1].data, spec[1].header
-        flux, err = sd['flux'], sd['error']
+        spectrograph = db.parse_spectrograph(specfile)
+        if spectrograph in ['sts', 'cos']:
+            sd, sh = spec[1].data, spec[1].header
+            flux, err = sd['flux'], sd['error']
+            wmid, flags = sd['wavelength'], sd['dq']
+            exptarr, start, end = [np.ones(flux.shape)*sh[s] for s in ['exptime', 'expstart', 'expend']]
+        elif spectrograph == 'fos':
+            template = specfile[:-8] + '{}' + '.fits'
+            hdus = [fits.open(template.format(ext)) for ext in ['c0f', 'c1f', 'c2f', 'cqf']]
+            wmid, flux, err, flags = [h[0].data[:, ::-1] for h in hdus]
+            start, end = [np.ones(flux.shape)*hdus[0][0].header[s] for s in [ 'expstart', 'expend']]
+            exptarr = np.ones(flux.shape) * hdus[0][1].data['exposure'][:, np.newaxis]
+        else:
+            raise NotImplementedError()
         shape = flux.shape
         insti = db.getinsti(specfile)
         iarr = np.ones(shape)*insti
-        wmid, flags = sd['wavelength'], sd['dq']
         wedges = np.array([mids2edges(wm, 'left', 'linear-x') for wm in wmid])
         w0, w1 = wedges[:,:-1], wedges[:,1:]
-        exptarr, start, end = [np.ones(shape)*sh[s] for s in
-                               ['exptime', 'expstart', 'expend']]
         normfac = np.ones(shape)
         datas = np.array([w0,w1,flux,err,exptarr,flags,iarr,normfac,start,end])
         datas = datas.swapaxes(0,1)
@@ -521,6 +530,8 @@ def __trimHSTtbl(spectbl):
         bad = (spectbl['flags'] & 128) > 0
     elif '_sts_' in name:
         bad = (spectbl['flags'] & (128 | 4)) > 0
+    elif '_fos_' in name:
+        bad = np.zeros(len(spectbl), bool)
     beg,end = block_edges(bad)
     if len(beg) >= 2:
         return spectbl[end[0]:beg[-1]]
@@ -562,7 +573,7 @@ def writehlsp(star_or_spectbl, components=True):
         star = star_or_spectbl
         pfs = db.allpans(star)
         pan = read(filter(lambda s: 'native_resolution' in s, pfs))[0]
-        writehlsp(pan)
+        writehlsp(pan, components=components)
         dpan = read(filter(lambda s: 'dR=' in s, pfs))[0]
         writehlsp(dpan, components=False)
         return
@@ -610,19 +621,17 @@ def writehlsp(star_or_spectbl, components=True):
         if 'hst' in name:
             # clooge. meh.
             band = name[0]
-            spectype = 'x1d' if band == 'u' else 'sx1'
-            if 'gj551' in name: spectype = 'x1d'
-            if 'gj1214' in name and 'sts_g230l' in name: spectype = 'x2d'
             f = db.findfiles(band, name, fullpaths=True)[0]
+            aper_key = 'APER_ID' if 'fos' in name else 'APERTURE'
             if 'custom' in name or 'coadd' in name:
                 srcspecs = fits.getdata(f, 'sourcespecs')
                 srcids = [db.parse_id(s) for s in srcspecs['sourcespecs']]
-                srcpaths = [db.findfiles(band, id, spectype, fullpaths=True)[0] for id in srcids]
-                apertures = [fits.getval(sf, 'APERTURE') for sf in srcpaths]
+                srcpaths = [db.sourcespecfiles(star, id)[0] for id in srcids]
+                apertures = [fits.getval(sf, aper_key) for sf in srcpaths]
                 assert len(set(apertures)) == 1
                 prihdr['APERTURE'] = apertures[0]
             else:
-                prihdr['APERTURE'] = fits.getval(f, 'APERTURE')
+                prihdr['APERTURE'] = fits.getval(f, aper_key)
         if 'xmm' in name or 'cxo' in name:
             hdr = fits.getheader(db.name2path(name))
             prihdr['GRATING'] = 'NA'
@@ -816,8 +825,9 @@ def writehlsp(star_or_spectbl, components=True):
         specnames = spectbl.meta['SOURCESPECS']
         if len(specnames) == 0: specnames = [name]
         rootnames = [s.split('_')[5] for s in specnames]
-        files = [db.findfiles(band, rn, spectype, fullpaths=True)[0] for rn in rootnames]
-        dataids = [fits.getval(f, 'ASN_ID') for f in files]
+        files = [db.choosesourcespecs(db.findfiles(band, star, rn))[0] for rn in rootnames]
+        id_key = 'ROOTNAME' if 'fos' in name else 'ASN_ID'
+        dataids = [fits.getval(f, id_key) for f in files]
         custom = [('custom' in s) or ('x2d' in s) for s in specnames]
         assert all(custom) or (not any(custom))
         srchdr['CUSTOM'] = custom[0], 'spectrum extracted from x2d (bad x1d)'

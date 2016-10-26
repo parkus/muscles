@@ -228,7 +228,7 @@ instvals = [2**i for i in range(len(instruments))]
 default_order = ['hst_cos_g130m','hst_cos_g160m','hst_cos_g230l','hst_sts_g140m','hst_sts_e140m','hst_sts_e230m',
                  'hst_sts_e230h','hst_sts_g230l', 'hst_sts_g230lb', 'xmm_epc_multi','xmm_epc_pn---', 'cxo_acs_-----',
                  'mod_euv_young', 'mod_apc_-----', 'mod_lya_young', 'mod_phx_-----', 'hst_sts_g750l', 'hst_sts_g430l',
-                 'hst_sts_g430m']
+                 'hst_sts_g430m', 'mod_gap_fill-', 'oth_---_other']
 
 # for use in making plots
 instranges = {'xobs': [5., 60.], 'xmm': [5., 60.], 'cxo': [1.0, 2.0], 'euv': [100., 1170.], 'hst': [1170., 5700.],
