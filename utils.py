@@ -312,7 +312,7 @@ def vstack(spectbls, name=''):
 def gapsplit(spec_or_bins):
     w0, w1 = __getw0w1(spec_or_bins)
     if w0 is None:
-        return spec_or_bins
+        return [spec_or_bins]
     gaps = (w0[1:] > w1[:-1])
     isplit = list(np.nonzero(gaps)[0] + 1)
     isplit.insert(0, 0)
@@ -812,6 +812,16 @@ def killnegatives(spectbl, sep_insts=False, quickndirty=True):
     else:
         bins = np.array([w0, w1]).T
         return rebin(spectbl, bins)
+
+
+def seriousflags(spec):
+    insts = np.unique(spec['instrument'])
+    bad = np.zeros(len(spec), bool)
+    for inst in insts:
+        sdqs = rc.seriousdqs(inst, from_x1d_header=False)
+        arg_inst = spec['instrument'] == inst
+        bad[arg_inst] = np.bitwise_and(spec[arg_inst]['flags'], sdqs) > 0
+    return bad
 
 
 def compare_specs(spec_new, spec_old, savetxt=None):

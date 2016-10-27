@@ -107,7 +107,7 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr=
             if not silent:
                 print ('trimming spectra in {} to the ranges {}'
                        ''.format(names[i], goodranges))
-            ends = 'loose' if 'cos_g130m' in names[i] else 'tight'
+            ends = 'loose' if ('cos_g130m' in names[i]) or ('sts_e140m' in names[i]) else 'tight'
             specs[i] = utils.keepranges(specs[i], goodranges, ends=ends)
 
     # adjust wavelenghts as specified
@@ -228,7 +228,7 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr=
                 rc.normfacs[star][inst] = 1.0, np.nan
             if not silent: print '\twon\'t normalize, cuz you said not to'
 
-        spec = smartsplice(spec, addspec, silent=silent)
+        spec = smartsplice(spec, addspec)
     spec.meta['NAME'] = db.parse_name(db.panpath(star))
     if savespecs:
         with open(rc.normfac_file, 'w') as f:
@@ -260,6 +260,8 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr=
                'area {}x the gap width'.format(order, span))
     spec = fill_gaps(spec, fill_with=order, fit_span=span, silent=silent,
                      mingapR=10.0)
+
+    assert not utils.hasgaps(spec)
 
     # resample at constant dw
     dw = rc.panres
@@ -559,7 +561,7 @@ def norm2photometry(spec, photom_tbl=None, band_dict=None, silent=False, plotfit
         return normfac, normfac_err
 
 
-def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
+def smartsplice(speca, specb, minsplice=0.005):
     """
     Splice one spectrum into another (presumably overlapping) spectrum in a
     way that minimizes overall error.
@@ -579,6 +581,9 @@ def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
         of the overlapping range. Set to 0.0 in order to allow splices of any
         size. This is only valid for splices where the range of one spectrum
         is entirely within another.
+    _firstrun :
+        just used to avoid infinite recursion -- funciton splits spectra at gaps on first go, then sets this flag to
+        false for subsequent recursive calls
 
     Returns
     -------
@@ -586,51 +591,59 @@ def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
         The spliced spectrum.
     """
 
-    # if there are zeros or nans for errors in one spectrum but not the other, delete portions as appropriate
-    def groom(speca, specb, safe):
-        getgood = lambda spec: np.isfinite(spec['error']) & (spec['error'] > 0)
-        bada = ~getgood(speca)
-        badrangesa = specutils.flags2ranges(utils.wbins(speca), bada)
-        arange = utils.gapless_ranges(speca)
-        if not np.any(badrangesa):
-            return speca
-        elif safe:
-            goodb = getgood(specb)
-            goodrangesb = specutils.flags2ranges(utils.wbins(specb), goodb)
-            cutranges = mnp.range_intersect(badrangesa, goodrangesb)
-            if len(cutranges) == 0:
-                return speca
-            keepranges = mnp.rangeset_subtract(arange, cutranges)
-            return utils.keepranges(speca, keepranges, ends='exact')
-        else:
-            brange = utils.gapless_ranges(specb)
-            cutranges = mnp.range_intersect(brange, badrangesa)
-            if len(cutranges) == 0:
-                return speca
-            keepranges = mnp.rangeset_subtract(arange, cutranges)
-            return utils.keepranges(speca, keepranges, ends='exact')
-    spectbla = groom(spectbla, spectblb, safe=True)
-    spectblb = groom(spectblb, spectbla, safe=False)
-    assert not (len(spectbla) == 0 and len(spectblb) == 0)
-    if len(spectbla) == 0:
-        return spectblb
-    if len(spectblb) == 0:
-        return spectbla
+    # divide spectra into contiguous pieces of model and data and then splice
+    def split_data_model(spec):
+        data = spec['error'] > 0
+        return utils.gapsplit(spec[data]), utils.gapsplit(spec[~data])
+    (specsa_data, specsa_model), (specsb_data, specsb_model) = map(split_data_model, [speca, specb])
+
+    remove_empties = lambda lst: filter(lambda spec: len(spec) > 0, lst)
+
+    # first, splice data to data according to order. once a spectrum has been spliced in, it can be discarded.
+    specs_data = specsa_data + specsb_data
+    specs_data = remove_empties(specs_data)
+    if len(specs_data) > 0:
+        specs_data.sort(key=lambda s: s['w0'][0])
+        specs_master = [specs_data[0]]
+        for spec in specs_data[1:]:
+            if utils.overlapping(specs_master[-1], spec):
+                specs_master[-1] = optimal_splice(specs_master[-1], spec, minsplice=minsplice)
+            else:
+                specs_master.append(spec)
+        spec_master = utils.vstack(specs_master, name='stitched spectrum')
+
+    # now splice in model data to ends and gaps, starting with model data from a, then from b
+    specs_model = specsa_model + specsb_model # don't sort to keep b after a
+    specs_model = remove_empties(specs_model)
+    gap_splice = lambda a,b: splice(b,a)
+    spec_master = reduce(gap_splice, specs_model, spec_master)
+
+    return spec_master
+
+
+def optimal_splice(speca, specb, minsplice):
+    """
+    Splice two contiguous spectra such that the error of the integrated spectrum is minimized. The spectra must be
+    data rather than model, obviously, or an optimal splice is not defined.
+
+    Returns
+    -------
+    splicedspec : astropy Table
+        The spliced spectrum.
+    """
+
+    # make sure both spetra are contiguous and either all data
+    all_data = lambda spec: np.all(spec['error'] > 0)
+    assert all_data(speca)
+    assert all_data(specb)
+    assert not utils.hasgaps(speca)
+    assert not utils.hasgaps(specb)
+    assert utils.overlapping(speca, specb)
 
     # sort the two spectra
-    both = [spectbla, spectblb]
-    key = lambda s: s['w0'][0]
-    both.sort(key=key)
+    both = [speca, specb]
+    both.sort(key=lambda s: s['w0'][0])
     spec0, spec1 = both
-    if not silent:
-        names = [s.meta['NAME'] for s in both]
-
-    if not utils.overlapping(*both):  # they don't overlap
-        specs = sum(map(utils.gapsplit, both), [])
-        specs.sort(key=key)
-        spec = reduce(splice, specs)
-        assert np.all(spec['w0'][1:] > spec['w0'][:-1])
-        return spec
 
     # get their overlap and the range of the overlap
     over0, over1 = utils.argoverlap(*both, method='loose')
@@ -639,26 +652,6 @@ def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
     wr0, wr1 = [[s['w0'][0], s['w1'][-1]] for s in oboth]
     wr = [max(wr0[0], wr1[0]), min(wr0[1], wr1[1])]
 
-    # if the spectra have gaps within the overlap, split them at their gaps,
-    # sort them, and splice in pairs
-    gaps0, gaps1 = map(utils.gapranges, both)
-    gapsin0 = np.any(mnp.inranges(gaps0.flatten(), wr1))
-    gapsin1 = np.any(mnp.inranges(gaps1.flatten(), wr0))
-    if gapsin0 or gapsin1:
-        specsa, specsb = map(utils.gapsplit, both)
-        specsa.sort(key=key)
-        specsb.sort(key=key)
-        spec = specsa.pop(0)
-        while len(specsa) > 0:
-            ospecs = filter(lambda s: utils.overlapping(spec, s), specsb)
-            while len(ospecs):
-                spec = smartsplice(spec, ospecs.pop(0))
-            spec = smartsplice(specsa.pop(0), spec)
-        spec = reduce(splice, specsb, spec)
-        assert np.all(spec['w0'][1:] > spec['w0'][:-1])
-        return spec
-
-    # otherwise, find the best splice locations
     # get all edges within the overlap
     we0, we1 = [__edgesinrange(s, wr) for s in both]
     we = np.hstack([wr[0], we0, we1])
@@ -671,7 +664,7 @@ def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
     dw = np.diff(we)
 
     # get flux and variance and mask values with dq flags and nan values
-    masks = [(spec['flags'] > 0) for spec in oboth]
+    masks = map(utils.seriousflags, oboth)
     flus = [spec['flux'] * dw for spec in oboth]
     sig2s = [(spec['error'] * dw) ** 2 for spec in oboth]
 
@@ -717,9 +710,6 @@ def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
         splicespec = spec1
         splicespec = utils.split_exact(splicespec, cut0, 'red')
         splicespec = utils.split_exact(splicespec, cut1, 'blue')
-        if not silent:
-            print ('spectrum {} spliced into {} from {:.2f} to {:.2f}'
-                   ''.format(names[1], names[0], cut0, cut1))
 
     # do the same, if not enclosed
     else:
@@ -732,10 +722,6 @@ def smartsplice(spectbla, spectblb, minsplice=0.005, silent=False):
         i = i[best]
         cut = we[best]
         splicespec = utils.split_exact(spec1, cut, 'red')
-
-        if not silent:
-            print ('spectrum {} spliced into {} from {:.2f} onward'
-                   ''.format(names[1], names[0], cut))
 
     spec = splice(spec0, splicespec)
     assert np.all(spec['w0'][1:] > spec['w0'][:-1])

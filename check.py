@@ -92,9 +92,10 @@ def HSTcountregions(specfile, scale='auto'):
 
 def piecespec(spec, err=True):
     """Plot a spectrum color-coded by source instrument."""
-    inst = spec['instrument']
-    for i in np.unique(inst):
-        keep = (inst == i)
+    insts = np.unique(spec['instrument'])
+    insts = filter(lambda i: np.log2(i) % 1 == 0, insts)
+    for i in insts:
+        keep = (spec['instrument'] == i)
         thisspec = spec[keep]
 
         configs_i = np.nonzero(np.array(rc.instvals) & i)[0]
@@ -106,6 +107,33 @@ def piecespec(spec, err=True):
         w, f = [np.nanmean(thisspec[s]) for s in ['w0', 'flux']]
         txtprops = dict(facecolor='white', alpha=0.5, color=color)
         plt.text(w, f, configstr, bbox=txtprops, ha='center')
+
+
+def compare_SED_versions(star, v1, v2, res='_var', binto=0.2, maxw=10000.):
+    """
+    Compare spectra from HKSP folder of different versions, plotting with piecespec.
+
+    Parameters
+    ----------
+    star
+    v1
+    v2
+
+    Returns
+    -------
+
+    """
+    fig, axs = plt.subplots(2, 1, sharex=True, sharey=True)
+    def plotspec(version, ax):
+        f, = db.findfiles(rc.hlsppath, star, 'broadband', version, res)
+        spec, = io.read(f)
+        spec = utils.keepranges(spec, 0, maxw)
+        spec = utils.evenbin(spec, binto)
+        plt.axes(ax)
+        piecespec(spec)
+        plt.text(0.05, 0.9, version, transform=ax.transAxes)
+    s1, s2 = map(plotspec, [v1, v2], axs)
+
 
 def vetcoadd(star, config):
     """Plot the components of a coadded spectrum to check that the coadd agrees."""

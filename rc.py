@@ -173,14 +173,25 @@ airglow_ranges = np.loadtxt(airglow_path, delimiter=',')
 # "SETTINGS"
 
 
-def seriousdqs(path):
+def seriousdqs(path_or_insti, from_x1d_header=True):
+    if type(path_or_insti) is str:
+        path = path_or_insti
+    else:
+        path = getinststr(path_or_insti)
     if '_cos_' in path:
-        return fits.getval(path, 'sdqflags', 1)
+        if from_x1d_header:
+            return fits.getval(path, 'sdqflags', 1)
+        else:
+            if ('g130m' in path) or ('g160m' in path):
+                return 8344
+            else:
+                return 184
     if '_sts_' in path:
         return (1 | 2 | 4 | 128 | 256 | 512 | 4096 | 8192)
     if '_fos_' in path:
         return (800 | 700 | 400 | 300 | 200 | 100 | 16)
     raise NotImplementedError('No serious dq flags defined for config\n{}'.format(path))
+
 spectbl_format =  {'units' : ['Angstrom']*2 + ['erg/s/cm2/Angstrom']*2 + ['s','','','','d','d'],
                    'dtypes' : ['f8']*5 + ['i2', 'i4'] + ['f8']*3,
                    'fmts' : ['.2f']*2 + ['.2e']*2 + ['.1f', 'b', 'd', '.2f', '.2f', '.2f'],
