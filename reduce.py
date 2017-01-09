@@ -28,6 +28,8 @@ import matplotlib.pyplot as plt
 
 colnames = rc.spectbl_format['colnames']
 airglow_ranges = rc.airglow_ranges
+keep = ~((1215.67 > airglow_ranges[:,0]) & (1215.67 < airglow_ranges[:,1]))
+airglow_ranges = airglow_ranges[keep]
 safe_ranges = [0.0] + list(airglow_ranges.ravel()) + [np.inf]
 safe_ranges = np.reshape(safe_ranges, [len(airglow_ranges) + 1, 2])
 
@@ -242,15 +244,33 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr=
         ilya = names.index(name[0])
         lyaspec = specs[ilya]
         normfac = lyaspec['normfac'][0]
+        lyacut = rc.lyacut
         if not silent:
             print ('replacing section {:.1f}-{:.1f} with STIS data from {lf}, '
                    'normalized by {normfac}'
-                   ''.format(*rc.lyacut, lf=name, normfac=normfac))
+                   ''.format(*lyacut, lf=name, normfac=normfac))
     else:
+        name = lyaspec.meta['NAME']
+        if 'mod' in name:
+            # splice where data crosses model, but take median of these crossings since noise will cause it to fluctuate
+            # around model for a bit
+            lya = lyaspec
+            wlya = (lya['w0'] + lya['w1'])/2.0
+            w0 = wlya[np.argmax(lya['flux'])]
+            dw3 = 300/3e5 * w0
+            dw10 = 1000/3e5 * w0
+            cos = utils.keepranges(spec, wlya[0], wlya[-1])
+            wcos = (cos['w0'] + cos['w1'])/2.0
+            roots = mnp.interp_roots(wcos, np.interp(wcos, wlya, lya['flux']) - cos['flux'])
+            wa = np.median(roots[(roots > w0 - dw10) & (roots < w0 - dw3)])
+            wb = np.median(roots[(roots < w0 + dw10) & (roots > w0 + dw3)])
+            lyacut = [wa, wb]
+        else:
+            lyacut = rc.lyacut
         if not silent:
             print ('replacing section {:.1f}-{:.1f} with data from {lf}'
-                   ''.format(*rc.lyacut, lf=lyaspec.meta['NAME']))
-    lyaspec = utils.keepranges(lyaspec, rc.lyacut)
+                   ''.format(*lyacut, lf=lyaspec.meta['NAME']))
+    lyaspec = utils.keepranges(lyaspec, lyacut)
     spec = splice(spec, lyaspec)
 
     # fill any remaining gaps
