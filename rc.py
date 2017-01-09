@@ -20,7 +20,7 @@ version = '20'
 # new mac
 gdrive = '/Users/rolo7566/Google Drive'
 codepath = gdrive + '/Python/muscles'
-root = gdrive + '/Grad School/Phd Work/MUSCLES'
+root = gdrive + '/Research/MUSCLES'
 local = '/Users/rolo7566/Datasets/MUSCLES'
 datapath = local + '/data'
 photometrypath = datapath + '/photometry'
@@ -52,7 +52,7 @@ stdbandpath = root + '/settings/stdbands.json'
 #datapath = r'C:\Users\Parke\Documents\Grad School\MUSCLES\Data'
 #productspath = r'C:\Users\Parke\Documents\Grad School\MUSCLES\Products'
 #codepath = r'C:\Users\Parke\Google Drive\Python\muscles'
-#root = r'C:\Users\Parke\Google Drive\Grad School\PhD Work\MUSCLES'
+#root = r'C:\Users\Parke\Google Drive\Research\MUSCLES'
 
 
 stars = list(starprops.values.sort('Teff_muscles').index)
@@ -215,7 +215,7 @@ stdbands = read_json(stdbandpath)
 prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m', 'cos_g230l', 'mod_phx', 'mod_apc']
 normranges = {'hst_sts_g430l':[3500., 5700.]}
 
-lyacut = [1209.5, 1222.0]
+lyacut = [1209.67,1221.67]
 panres = 1.0
 norm2phot_outlier_cut = 0.01
 teff_system_err = 100
