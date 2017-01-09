@@ -716,8 +716,6 @@ def writehlsp(star_or_spectbl, components=True):
     prihdr['FLUXMAX'] = np.max(spectbl['flux'])
     prihdr['FLUXUNIT'] = 'erg/s/cm2/ang' if 'phx' not in name else 'arbitrary'
 
-    prihdu = fits.PrimaryHDU(header=prihdr)
-
     # CREATE SPECTRUM EXTENSION
     spechdr = fits.Header()
     spechdr['EXTNAME'] = 'SPECTRUM'
@@ -770,6 +768,7 @@ def writehlsp(star_or_spectbl, components=True):
     for fname, data in zip(fitsnames, datas):
         spechdu.data[fname] = data
 
+    prihdu = fits.PrimaryHDU(header=prihdr)
     hdus = [prihdu, spechdu]
 
     # INSTRUMENT LEGEND
@@ -831,6 +830,14 @@ def writehlsp(star_or_spectbl, components=True):
         custom = [('custom' in s) or ('x2d' in s) for s in specnames]
         assert all(custom) or (not any(custom))
         srchdr['CUSTOM'] = custom[0], 'spectrum extracted from x2d (bad x1d)'
+
+        if 'gj551' in name:
+            if 'g230lb' in name:
+                rootnames = dataids = ['OCR7QQANQ', 'OCR7QQANQ']
+            if 'g430l' in name:
+                rootnames = dataids = ['OCR7QQAOQ', 'OCR7QQAPQ']
+            if 'g750l' in name:
+                rootnames = dataids = ['OCR7QQARQ', 'OCR7QQASQ', 'OCR7QQAQQ']
 
         fitscols = [fits.Column(name='ROOTNAME', format='9A', array=rootnames),
                     fits.Column(name='DATASET_ID', format='9A', array=dataids)]
