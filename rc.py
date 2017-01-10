@@ -215,7 +215,7 @@ stdbands = read_json(stdbandpath)
 prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m', 'cos_g230l', 'mod_phx', 'mod_apc']
 normranges = {'hst_sts_g430l':[3500., 5700.]}
 
-lyacut = [1209.67,1221.67]
+lyacut = (np.array([-300, 300])/3e5 + 1)*1215.67 #[1209.67,1221.67]
 panres = 1.0
 norm2phot_outlier_cut = 0.01
 teff_system_err = 100
