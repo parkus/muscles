@@ -2,6 +2,7 @@ import rc, io, db, utils, reduce as red
 from plot import specstep as ss
 from astropy import table
 from matplotlib import pyplot as plt
+import os
 
 mlstars = rc.observed[:]
 mlstars.remove('gj551')
@@ -52,3 +53,35 @@ def phx_norm_compare():
         chng = abs(fac/ofac - 1)*100.
         name = rc.starprops['name txt'][star]
         print '{:8s} | {:6.1f}'.format(name, chng)
+
+# ----------------------------------------------------------------------------------------------------------------------
+# plot Lya splice for all stars
+
+def lya_splices():
+    stars = rc.stars[:11]
+    stars.remove('gj551')
+    dw = 0.1
+    for star in stars:
+        pan = io.readpan(star)
+        pan = utils.keepranges(pan, 1100, 1300)
+        pan = utils.evenbin(pan, dw)
+
+        sf = db.findfiles('u', star, 'coadd', 'cos_g130m')
+        spec, = io.read(sf)
+        spec = utils.evenbin(spec, dw)
+
+        lf = db.findfiles('u', star, 'mod', 'lya')
+        lya, = io.read(lf)
+
+        plt.figure()
+        [ss(s, err=False) for s in [pan, spec, lya]]
+        plt.xlim(1210, 1222)
+        up, _ = utils.flux_integral(spec, 1217, 1220)
+        plt.ylim(0, up*4)
+        plt.legend(['pan', 'cos', 'lya'], loc='best')
+        plt.savefig(os.path.join(rc.scratchpath, 'lya splices', '{} linear.pdf'.format(star)))
+
+        mx = spec['flux'].max()
+        plt.ylim(mx/1e7, mx)
+        plt.yscale('log')
+        plt.savefig(os.path.join(rc.scratchpath, 'lya splices', '{} log.pdf'.format(star)))
