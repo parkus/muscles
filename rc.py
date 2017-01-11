@@ -215,7 +215,7 @@ stdbands = read_json(stdbandpath)
 prenormed = ['mod_lya', 'mod_euv', 'cos_g130m', 'cos_g160m', 'cos_g230l', 'mod_phx', 'mod_apc']
 normranges = {'hst_sts_g430l':[3500., 5700.]}
 
-lyacut = (np.array([-300, 300])/3e5 + 1)*1215.67 #[1209.67,1221.67]
+lyacut = (np.array([-400, 400])/3e5 + 1)*1215.67 #[1209.67,1221.67]
 panres = 1.0
 norm2phot_outlier_cut = 0.01
 teff_system_err = 100
@@ -233,7 +233,7 @@ specstrings = ['x1d', 'mod_euv', 'mod_lya', 'spec', 'sx1', 'mod_phx', 'coadd', '
 instruments = ['hst_cos_g130m','hst_cos_g160m','hst_cos_g230l','hst_sts_g140m','hst_sts_e140m','hst_sts_e230m',
                'hst_sts_e230h','hst_sts_g230l','hst_sts_g430l','hst_sts_g430m','mod_gap_fill-',
                'xmm_epc_multi','xmm_epc_pn---', 'cxo_acs_-----', 'mod_euv_young', 'mod_apc_-----',
-               'mod_lya_young', 'mod_phx_-----', 'oth_---_other', 'hst_sts_g230lb', 'hst_sts_g750l', 'hst_fos_g570h',
+               'mod_lya_young','mod_phx_-----', 'oth_---_other', 'hst_sts_g230lb', 'hst_sts_g750l', 'hst_fos_g570h',
                'hst_fos_g780h']
 instvals = [2**i for i in range(len(instruments))]
 default_order = ['hst_cos_g130m','hst_cos_g160m','hst_cos_g230l','hst_sts_g140m','hst_sts_e140m','hst_sts_e230m',

@@ -57,10 +57,11 @@ def phx_norm_compare():
 # ----------------------------------------------------------------------------------------------------------------------
 # plot Lya splice for all stars
 
-def lya_splices():
-    stars = rc.stars[:11]
-    stars.remove('gj551')
-    dw = 0.1
+def lya_splices(stars='all'):
+    if stars=='all':
+        stars = rc.stars[:11]
+        stars.remove('gj551')
+    dw = 0.05
     for star in stars:
         pan = io.readpan(star)
         pan = utils.keepranges(pan, 1100, 1300)
