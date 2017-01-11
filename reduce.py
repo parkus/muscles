@@ -33,6 +33,7 @@ airglow_ranges = airglow_ranges[keep]
 safe_ranges = [0.0] + list(airglow_ranges.ravel()) + [np.inf]
 safe_ranges = np.reshape(safe_ranges, [len(airglow_ranges) + 1, 2])
 lyacut = rc.lyacut
+haw_fit_ranges = [[1215.67-5, (1 - 300/3e5)*1215.67], [(1 + 300/3e5)*1215.67, 1217.5], [1219.25, 1215.67+5]]
 
 def theworks(star, newphx=False, silent=False):
 
@@ -249,6 +250,20 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr=
                    'normalized by {normfac}'
                    ''.format(*lyacut, lf=name, normfac=normfac))
     else:
+        wlya = (lyaspec['w0'] + lyaspec['w1'])/2.0
+        g_guess = 0.1
+        norm_guess = 1e-3*np.max(lyaspec['flux']) / (g_guess/2/(2**2 + g_guess))
+        guess = [1215.7, norm_guess, g_guess]
+        params = lorentz_fit(utils.keepranges(spec, haw_fit_ranges), guess)
+        lntz = lorentz(wlya, *params)
+        spec.meta['lntz_w0'], spec.meta['lntz_norm'], spec.meta['lntz_gam'] = params
+        i0s, i1s = mnp.block_edges(lntz > lyaspec['flux'])
+        if len(i0s) == 3:
+            i0s = i0s[[0,2]]
+            i1s = i1s[[0,2]]
+        assert len(i0s) == 2
+        for i0, i1 in zip(i0s, i1s):
+            lyaspec['flux'][i0:i1] = lntz[i0:i1]
         if not silent:
             print ('replacing section {:.1f}-{:.1f} with data from {lf}'
                    ''.format(*lyacut, lf=lyaspec.meta['NAME']))
@@ -260,8 +275,7 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr=
     if not silent:
         print ('filling in any gaps with an order {} polynomial fit to an '
                'area {}x the gap width'.format(order, span))
-    spec = fill_gaps(spec, fill_with=order, fit_span=span, silent=silent,
-                     mingapR=10.0)
+    spec = fill_gaps(spec, fill_with=order, fit_span=span, silent=silent, mingapR=10.0)
 
     assert not utils.hasgaps(spec)
 
@@ -280,6 +294,19 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr=
             io.writefits(s, path, overwrite=True)
 
     return spec
+
+
+def lorentz_fit(spec, guess):
+    w = (spec['w0'] + spec['w1'])/2.0
+    f, e = spec['flux'], spec['error']
+    def chi2(params):
+        return np.sum((f - lorentz(w, *params))**2/e**2)
+    result = opt.minimize(chi2, guess, method='powell')
+    assert result.success
+    return result.x
+
+def lorentz(w, w0, norm, g):
+    return norm * (g/2)/((w - w0)**2 + (g/2)**2)
 
 
 def solarspec(date):
