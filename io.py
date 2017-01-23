@@ -128,6 +128,7 @@ def read(specfiles):
                     specs.pop(i)
     except IOError:
         pass
+
     return specs
 
 
@@ -161,19 +162,21 @@ def readstdfits(specfile):
     if 'phx' in specfile:
         spectbl['flux'].unit = ''
 
+        spectbl['w'] = (spectbl['w0'] + spectbl['w1'])/2
+
     return spectbl
 
 
-def readfits(specfile):
+def readfits(specfile, observatory=None, spectrograph=None):
     """Read a fits file into standardized table."""
 
-    observatory = db.parse_observatory(specfile)
+    if observatory is None: observatory = db.parse_observatory(specfile)
 
     spec = fits.open(specfile)
     if any([s in specfile for s in ['coadd', 'custom', 'mod', 'panspec', 'other', 'hlsp']]):
         return [readstdfits(specfile)]
     elif observatory == 'hst':
-        spectrograph = db.parse_spectrograph(specfile)
+        if spectrograph is None: spectrograph = db.parse_spectrograph(specfile)
         if spectrograph in ['sts', 'cos']:
             sd, sh = spec[1].data, spec[1].header
             flux, err = sd['flux'], sd['error']
@@ -745,6 +748,10 @@ def writehlsp(star_or_spectbl, components=True):
         spectbl['normflux'].unit = 'Angstrom-1'
         spectbl['normerr'].unit = 'Angstrom-1'
         prihdr['BOLOFLUX'] = utils.bolo_integral(spectbl.meta['STAR'])
+
+        # add header keywords for lorentzian fit
+        prihdr['LNZ_NORM'] = spectbl.meta['LNZ_NORM']
+        prihdr['LNZ_GAM'] = spectbl.meta['LNZ_GAM']
 
         cols.extend(['instrument', 'normfac', 'normflux', 'normerr'])
         descriptions.extend(['bitmask identifying the source instrument(s). See "instlgnd" extension for a legend.',

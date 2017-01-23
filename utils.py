@@ -279,7 +279,9 @@ def list2spectbl(datalist, star='', filename='', name='', sourcespecs=[],
             'STAR' : star,
             'NAME' : name,
             'COMMENT' : comments}
-    return Table(cols, meta=meta)
+    spec = Table(cols, meta=meta)
+    spec['w'] = (spec['w0'] + spec['w1'])/2.
+    return spec
 
 def vstack(spectbls, name=''):
     stars = [s.meta['STAR'] for s in spectbls]
@@ -522,12 +524,9 @@ def rebin(spec, newbins):
     end = mnp.rebin(newedges, oldedges, spec['maxobsdate'], 'max')
     expt = mnp.rebin(newedges, oldedges, spec['exptime'], 'avg')
 
-    # spectbl accoutrments
-    star, name, fn, sf = [spec.meta[s] for s in
-                          ['STAR', 'NAME', 'FILENAME', 'SOURCESPECS']]
-
-    return vecs2spectbl(w0, w1, flux, error, expt, flags, insts, normfac,
-                              start, end, star, fn, name, sf)
+    newspec =  vecs2spectbl(w0, w1, flux, error, expt, flags, insts, normfac, start, end)
+    newspec.meta = spec.meta
+    return newspec
 
 
 def evenbin(spectbl, dw, lo=None, hi=None, keep_remainder=False):
