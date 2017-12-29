@@ -107,7 +107,7 @@ def EVEFlareCat2FITS(savdata=None):
     def parsetime(flare):
         idstr = flare['flare_id'][0]
         return float(idstr[:4])*365.0 + float(idstr[4:7])
-    expt = parsetime(EVEcat[-1]) - parsetime(EVEcat[0])
+    expt = parsetime(EVEcat[-1]) - parsetime(EVEcat[0]) #days
 
     # I'll make a separate FITS table for each of these
     linelabels = EVEcat[0]['evl_lines'][0]['evl_label']
@@ -117,10 +117,11 @@ def EVEFlareCat2FITS(savdata=None):
             'decay_25_time_jd', 'decay_50_time_jd', 'decay_75_time_jd', 'energy_25', 'energy_50', 'energy_75']
     # renamed to (norm_pk and cumfreq will be added later)
     colnames = ['flux_pre', 'flux_pk', 'tpeak', 'trise25', 'trise50', 'trise75',
-                'tdecay25', 'tdecay50', 'tdecay75', 'energy25', 'energy50', 'energy75', 'norm_pk', 'cumfreq']
+                'tdecay25', 'tdecay50', 'tdecay75', 'energy25', 'energy50', 'energy75',
+                'pew', 'norm_pk', 'Pcumfreq', 'Ecumfreq']
     # with the following units and data types
-    units = ['erg cm-2']*2 + ['JD']*7 + ['erg']*3 + ['', 'd-1']
-    dtypes = ['D']*12 + ['F', 'D']
+    units = ['erg cm-2']*2 + ['JD']*7 + ['erg']*3 + ['s', ''] + ['d-1']*2
+    dtypes = ['D']*16
 
     # loop through and make each table
     fitstbls = []
@@ -137,27 +138,32 @@ def EVEFlareCat2FITS(savdata=None):
             for key in keys:
                 cols[key].append(flare[iline][key])
 
+        # add some stuff...
+        cols['peak_norm'] = np.array(cols['peak_irrad'])/cols['preflare_irrad']
+        cols['pew'] = np.array(cols['energy_75'])/cols['preflare_irrad']
+
         # groom the columns a bit by converting to arrays and changing some units where desired
         for key in cols:
             cols[key] = np.array(cols[key])
             if 'energy' in key:
-                cols[key] *= u.J / u.m**2
-                cols[key] *= (4*np.pi*(u.AU)**2)
+                cols[key] = cols[key] * u.J / u.m**2
+                cols[key] = cols[key] * (4*np.pi*(u.AU)**2)
                 cols[key] = cols[key].to(u.erg).value
             if 'irrad' in key:
-                cols[key] *= u.W / u.m**2
+                cols[key] = cols[key] * u.W / u.m**2
                 cols[key] = cols[key].cgs.value
 
-        # add columns for the peak flux in normalized units and cumulative frequency
-        ekey = 'energy_75'
-        cols['peak_norm'] = cols['peak_irrad']/cols['preflare_irrad']
-        bad = cols[ekey] < 0.0
-        argsort = np.argsort(cols[ekey])[::-1]  # bad flares will be sorted to end
-        nflares = np.arange(len(EVEcat)) + 1.0
-        cumfreq = nflares/expt
-        cumfreq[argsort] = cumfreq.copy()
-        cumfreq[bad] = np.nan
-        cols['cumfreq'] = cumfreq
+        # add cumulative frequency
+        for ekey in ['energy_75', 'pew']:
+            e = cols[ekey]
+            bad = (e <= 0.0) | np.isnan(e)
+            e[bad] = -np.inf
+            argsort = np.argsort(cols[ekey])[::-1]  # bad flares will be sorted to end
+            nflares = np.arange(len(EVEcat)) + 1.0
+            cumfreq = nflares/expt
+            cumfreq[argsort] = cumfreq.copy()
+            cumfreq[bad] = np.nan
+            cols[ekey[0].upper() + 'cumfreq'] = cumfreq
 
         # parse line info
         linelabel = linelabels[iline]
@@ -171,7 +177,7 @@ def EVEFlareCat2FITS(savdata=None):
         hdr['ion'] = name
         hdr['wave'] = wave
         hdr['logTform'] = Tform
-        arrays = [cols[key] for key in (keys + ['peak_norm', 'cumfreq'])]
+        arrays = [cols[key] for key in (keys + ['pew', 'peak_norm', 'Pcumfreq', 'Ecumfreq'])]
         colsFITS = [fits.Column(array=a, name=n, unit=ut, format=dt)
                     for a,n,ut,dt in zip(arrays, colnames, units, dtypes)]
         tbl = fits.BinTableHDU.from_columns(colsFITS, header=hdr)

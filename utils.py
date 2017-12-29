@@ -283,12 +283,12 @@ def list2spectbl(datalist, star='', filename='', name='', sourcespecs=[],
     spec['w'] = (spec['w0'] + spec['w1'])/2.
     return spec
 
-def vstack(spectbls, name=''):
+def vstack(spectbls, name='', reckless=False):
     stars = [s.meta['STAR'] for s in spectbls]
-    if len(set(stars)) > 1:
-        raise ValueError("Don't try to stack tables from different stars.")
-    else:
-        star = stars[0]
+    if not reckless:
+        if len(set(stars)) > 1:
+            raise ValueError("Don't try to stack tables from different stars.")
+    star = stars[0]
 
     spectbls = filter(lambda s: len(s) > 0, spectbls)
 
@@ -300,8 +300,14 @@ def vstack(spectbls, name=''):
     sourcespecs = []
     comments = []
     for s in spectbls:
-        sourcespecs.extend(s.meta['SOURCESPECS'])
-        comments.extend(s.meta['COMMENT'])
+        try:
+            sourcespecs.extend(s.meta['SOURCESPECS'])
+        except KeyError:
+            pass
+        try:
+            comments.extend(s.meta['COMMENT'])
+        except KeyError:
+            continue
     sourcespecs = list(set(sourcespecs))
     comments = list(set(comments))
 
@@ -735,7 +741,7 @@ def add_photonflux(spectbl):
     return spectbl
 
 
-def killnegatives(spectbl, sep_insts=False, quickndirty=True):
+def killnegatives(spectbl, sep_insts=False, quickndirty=True, minSN=None):
     """
     Removes negative bins by summing with adjacent bins until there are no negative bins left. I.e. the resolution in
     negative areas is degraded until the flux is no longer negative.
@@ -771,7 +777,10 @@ def killnegatives(spectbl, sep_insts=False, quickndirty=True):
 
     forward = True
     while True:
-        negs_bool = f < 0
+        if minSN is None:
+            negs_bool = f < 0
+        else:
+            negs_bool = f/np.sqrt(v) < minSN
         if not np.any(negs_bool) or len(f) <= 1:
             break
 

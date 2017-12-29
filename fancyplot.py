@@ -5,7 +5,7 @@ import mypy.my_numpy as mnp
 import rc, io, reduce, db, utils, plot
 import matplotlib as mpl
 import itertools
-import uneven.functions as un
+import uneven as un
 # import spectralPhoton.functions as sp
 import numpy as np
 from astropy.io import fits

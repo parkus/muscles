@@ -86,3 +86,24 @@ def lya_splices(stars='all'):
         plt.ylim(mx/1e7, mx)
         plt.yscale('log')
         plt.savefig(os.path.join(rc.scratchpath, 'lya splices', '{} log.pdf'.format(star)))
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# compute ratio of lya flux to galex band flux
+
+def lya_galex_ratio(star):
+    import numpy as np
+    nuv = np.loadtxt('/Users/rolo7566/Datasets/shared/filter response curves/galexNUV.txt', skiprows=1).T
+    fuv = np.loadtxt('/Users/rolo7566/Datasets/shared/filter response curves/galexFUV.txt', skiprows=1).T
+
+    pan = io.readpan(star)
+    lya, = io.read(db.findfiles('u', star, 'mod_lya'))
+    lya = utils.flux_integral(lya)[0]
+
+    w = (pan['w0'] + pan['w1'])/2.0
+    f = pan['flux']
+    twf = lambda bp: np.trapz(np.interp(bp[0], w, f)*bp[1], bp[0])
+    NUV, FUV = map(twf, [nuv, fuv])
+    print star
+    print 'Lya/NUV ratio = {:.2g}'.format(lya/NUV)
+    print 'Lya/FUV ratio = {:.2g}'.format(lya/FUV)

@@ -115,7 +115,7 @@ def read(specfiles):
     specfiles = db.validpath(specfiles)
 
     readfunc = {'fits' : readfits, 'txt' : readtxt, 'sav' : readsav,
-                'csv' : readcsv, 'idlsav' : readsav}
+                'csv' : readcsv, 'idlsav' : readsav, 'fit': readfits}
     star = db.parse_star(specfiles)
     i = specfiles[::-1].find('.')
     fmt = specfiles[-i:]
@@ -202,7 +202,17 @@ def readfits(specfile, observatory=None, spectrograph=None):
 
         #cull off-detector data
         spectbls = [__trimHSTtbl(spectbl) for spectbl in spectbls]
-
+    elif observatory == 'fuse':
+        spectbls = []
+        star = spec[0].header['targname']
+        expt = spec[0].header['obstime']
+        for sub in spec[1:]:
+            w, f, e = [sub.data[s] for s in ['wave', 'flux', 'error']]
+            wedges = midpts(w)
+            wedges = np.insert(wedges, [0, len(wedges)], [2*w[0] - wedges[0], 2*w[-1] - wedges[-1]])
+            w0, w1 = wedges[:-1], wedges[1:]
+            spectbl = utils.vecs2spectbl(w0, w1, f, e, exptime=expt, star=star, filename=specfile)
+            spectbls.append(spectbl)
     elif observatory in ['xmm', 'cxo']:
         sh = spec[0].header
         star = db.parse_star(specfile)

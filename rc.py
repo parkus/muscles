@@ -15,13 +15,13 @@ from astropy.io import fits
 from pandas import read_json
 import scicatalog.scicatalog as sc
 
-version = '21'
+version = '22'
 
 # new mac
-gdrive = '/Users/rolo7566/Google Drive'
+gdrive = '/Users/parke/Google Drive'
 codepath = gdrive + '/Python/muscles'
 root = gdrive + '/Research/MUSCLES'
-local = '/Users/rolo7566/Datasets/MUSCLES'
+local = '/Users/parke/Google Drive/Datasets/muscles'
 datapath = local + '/data'
 photometrypath = datapath + '/photometry'
 productspath = local + '/products'
@@ -32,7 +32,7 @@ photondir = datapath + '/photons'
 flaredir = productspath + '/flare_catalogs'
 proppath = root + '/share/starprops'
 moviepath = productspath + '/movies'
-filterpath = '/Users/rolo7566/Datasets/shared/filter response curves'
+filterpath = '/Users/parke/Datasets/shared/filter response curves'
 sharepath = root +'/share'
 xsectionpath = local + '/xsections'
 normfac_file = local + '/normfac_log.json'
@@ -55,12 +55,12 @@ stdbandpath = root + '/settings/stdbands.json'
 #root = r'C:\Users\Parke\Google Drive\Research\MUSCLES'
 
 
-stars = list(starprops.values.sort('Teff_muscles').index)
+stars = list(starprops.values.sort_values('Teff_muscles').index)
 observed = [star for star in stars if starprops['observed'][star]]
 hosts = [star for star in stars if starprops['host'][star]]
 
-with open(normfac_file) as f:
-    normfacs = json.load(f)
+# with open(normfac_file) as f: # FIXME: uncomment once I have datasets transfered
+#     normfacs = json.load(f)
 
 insolation = 1361000. # cgs
 
@@ -90,8 +90,8 @@ phxZgrid = np.hstack([np.arange(-4.0, -2.0, 1.0),
                    np.arange(-2.0, 1.1, 0.5)])
 phxagrid = np.arange(-0.2, 1.3, 0.2)
 phxgrids = [phxTgrid, phxggrid, phxZgrid, phxagrid]
-phxwave = fits.getdata(os.path.join(phxrepo, 'wavegrid_hires.fits'))
-phxwave = np.hstack([[499.95], midpts(phxwave), [54999.875]])
+# phxwave = fits.getdata(os.path.join(phxrepo, 'wavegrid_hires.fits')) # FIXME: uncomment once I have datasets transfered
+# phxwave = np.hstack([[499.95], midpts(phxwave), [54999.875]])
 
 
 def phxurl(Teff, logg=4.5, FeH=0.0, aM=0.0, repo='ftp'):
@@ -234,7 +234,7 @@ instruments = ['hst_cos_g130m','hst_cos_g160m','hst_cos_g230l','hst_sts_g140m','
                'hst_sts_e230h','hst_sts_g230l','hst_sts_g430l','hst_sts_g430m','mod_gap_fill-',
                'xmm_epc_multi','xmm_epc_pn---', 'cxo_acs_-----', 'mod_euv_young', 'mod_apc_-----',
                'mod_lya_young','mod_phx_-----', 'oth_---_other', 'hst_sts_g230lb', 'hst_sts_g750l', 'hst_fos_g570h',
-               'hst_fos_g780h']
+               'hst_fos_g780h', 'hst_cos_g140l']
 instvals = [2**i for i in range(len(instruments))]
 default_order = ['hst_cos_g130m','hst_cos_g160m','hst_cos_g230l','hst_sts_g140m','hst_sts_e140m','hst_sts_e230m',
                  'hst_sts_e230h','hst_sts_g230l', 'hst_sts_g230lb', 'xmm_epc_multi','xmm_epc_pn---', 'cxo_acs_-----',

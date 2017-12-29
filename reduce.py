@@ -761,7 +761,7 @@ def optimal_splice(speca, specb, minsplice):
     return spec
 
 
-def splice(spectbla, spectblb):
+def splice(spectbla, spectblb, reckless=False):
     """
     Replace spectrum a with spectrum b where they overlap.
 
@@ -789,7 +789,7 @@ def splice(spectbla, spectblb):
     speclist.append(spectblb)
     rightspec = utils.split_exact(spectbla, spectblb['w1'][-1], 'red')
     speclist.append(rightspec)
-    spec = utils.vstack(speclist)
+    spec = utils.vstack(speclist, reckless=reckless)
 
     # modify metadata
     metas = [s.meta for s in [spectbla, spectblb]]
@@ -809,7 +809,7 @@ def splice(spectbla, spectblb):
     return spec
 
 
-def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime',exptime='sum',  silent=False):
+def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime', exptime='sum',  silent=False):
     """Coadd spectra in spectbls. weights can be 'exptime' or 'error'"""
     inst = __same_instrument(spectbls)
     # star = __same_star(spectbls)
@@ -840,7 +840,6 @@ def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime',exptime=
     weights = [1.0 / ee ** 2 for ee in e] if weights == 'error' else expt
 
     cwe, cf, ce, cexpt, dq = specutils.coadd(we, f, e, weights, dq)
-
 
     data = [inst, start, end]
     funcs = ['or', 'min', 'max']
