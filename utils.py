@@ -63,6 +63,39 @@ def gap_by_gap(spec, func, *args, **kwargs):
     return vstack(specs, name=name)
 
 
+def max_dw_bin(spec, maxdw=1.0):
+    """Rebin a spectrum to a finer resolution where it is too coarse (even though I hate doing this since it gives a
+    false sense of precision."""
+    if hasgaps(spec):
+        return gap_by_gap(max_dw_bin, maxdw=maxdw)
+
+    we = wedges(spec)
+
+    # this is going to be hard to read, but my plan is to split the bins into the ranges where the resolution is too
+    # coarse and too fine, lay a grid over the full range, and then keep only those points within the ranges where the
+    # resolution is too coarse. Then I'll sort these into the original bins
+
+    # find alternating ranges where resolution is okay and too coarse
+    big_bins = np.diff(we) > maxdw
+    block_edges = np.nonzero(np.diff(big_bins) != 0)[0] + 1
+    block_edges = np.insert(block_edges, [0, len(block_edges)], [0, len(big_bins)])
+    w_ranges = we[block_edges]
+
+    # determine if the first range is one in which the resolution is okay or not
+    i_first_coarse = 1 if we[1] - we[0] > maxdw else 0
+
+    # sort a maxdw grid into the ranges
+    wgrid = np.arange(we[0]+ maxdw, we[-1], maxdw)
+    i_sort = np.searchsorted(w_ranges, wgrid, side='left')
+
+    # keep those in the coarse ranges
+    in_coarse = (i_sort % 2 == i_first_coarse)
+    wgrid = wgrid[in_coarse]
+
+    # delete any of the original bin edges in the coarse ranges
+    i_sort = np.searchsorted(w_ranges, we)
+
+    # splice 'em in, removing any duplicates
     return np.unique(np.concatenate([we, wgrid]))
 
 
