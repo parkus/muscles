@@ -71,6 +71,7 @@ def adaptive_rebin_pans(star):
     pan = io.readpan(star)
     adapt = utils.killnegatives(pan, quickndirty=False)
     over = utils.evenbin(adapt, 1.0)
+
     name = pan.meta['NAME']
     adapt.meta['NAME'] = name.replace('native', 'adaptive')
     over.meta['NAME'] = name.replace('native', 'adaptive_oversampled')

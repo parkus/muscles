@@ -53,6 +53,9 @@ def fancyBin(spec, maxpow=30000, mindw=None):
     return vstack(pieces)
 
 
+    return np.unique(np.concatenate([we, wgrid]))
+
+
 def bolo_integral(star_or_panspec, uplim=np.inf):
     """Compute the integral of all flux for the star."""
     if star_or_panspec == 'sun':
@@ -741,7 +744,7 @@ def add_photonflux(spectbl):
     return spectbl
 
 
-def killnegatives(spectbl, sep_insts=False, quickndirty=True, minSN=None):
+def killnegatives(spectbl, sep_insts=False, quickndirty=True, minSN=None, saveSN=3):
     """
     Removes negative bins by summing with adjacent bins until there are no negative bins left. I.e. the resolution in
     negative areas is degraded until the flux is no longer negative.
@@ -775,42 +778,61 @@ def killnegatives(spectbl, sep_insts=False, quickndirty=True, minSN=None):
     f, e = f_dsty*dw, e_dsty*dw
     v = e**2
 
-    forward = True
+    # I had this kind of vectorized once, but ultimately I think it just made for terrible readability with little gain in speed
     while True:
         if minSN is None:
-            negs_bool = f < 0
+            if not np.any(f < 0):
+                break
         else:
-            negs_bool = f/np.sqrt(v) < minSN
-        if not np.any(negs_bool) or len(f) <= 1:
-            break
+            if not np.any(f/np.sqrt(v) < minSN):
+                break
 
-        negs_i, = np.where(f < 0)
+        # find the worst offending point
+        imin = np.argmin(f/np.sqrt(v)) if minSN else np.argmin(f)
 
-        # remove any adjacent bins or else the flux will be double-counted
-        adjacent = np.zeros_like(negs_i, bool)
-        adjacent[1:] = negs_i[1:] == negs_i[:-1] + 1
-        negs_i = negs_i[~adjacent]
+        # integrate bins progressively outward until it no longer offends
+        i0, i1 = imin-1, imin+1
+        w0bin, w1bin, fbin, vbin = f[imin], v[imin],w0[imin], w1[imin]
+        side = 0
+        while True:
+            if minSN is None:
+                if fbin > 0:
+                    break
+            else:
+                if fbin/sqrt(vbin) > minSN:
+                    break
 
-        # now sum pairs of bins
-        if forward:
-            # if the last pt is negative, forget it for this iteration
-            if negs_i[-1] == len(f) - 1:
-                negs_i = negs_i[:-1]
-            sum_i = negs_i + 1
-            w1[negs_i] = w1[sum_i]
-        else:
-            # now its the first point we need to worry about
-            if negs_i[0] == 0:
-                negs_i = negs_i[1:]
-            sum_i = negs_i - 1
-            w0[negs_i] = w0[sum_i]
+            # check if we should stop integrating outward on either side
+            stop_at_0 = i0 < 0 or f[i0]/sqrt(v[i0]) > saveSN
+            stop_at_1 = i1 > len(f)-1 or f[i1]/v[i1] > saveSN
 
-        f[negs_i] += f[sum_i]
-        v[negs_i] += v[sum_i]
-        w0, w1, f, v = [np.delete(a, sum_i) for a in [w0, w1, f, v]]
+            # if can't integrate further outward, then set fbin to 0 if it is still negative and break
+            if stop_at_0 and stop_at_1:
+                fbin = 0 if fbin < 0 else fbin
+                break
 
-        forward = not forward
+            # else incorporate the next bin
+            if side == 0:
+                fbin += f[i0]
+                vbin += v[i0]
+                i0 -= 1
+            else:
+                fbin += f[i1]
+                vbin += v[i1]
+            side = not side
 
+        # replace the appropriate section of the vectors
+        bad_block = Slice(i0+1, i1)
+        arrays = w0, w1, f, v
+        inserts = w0[i0+1], w1[i1-1], fbin, ebin
+        new_arrays = []
+        for a, value in zip(arrays, inserts):
+            a = np.delete(a, bad_block)
+            a = np.insert(a, i0+1, value)
+            new_arrays.append(a)
+        w0, w1, f, v = new_arrays
+
+    # return a spectbl
     if quickndirty:
         dw = w1 - w0
         f_dsty, e_dsty = f/dw, np.sqrt(v)/dw
