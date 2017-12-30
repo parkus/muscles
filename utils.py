@@ -53,6 +53,16 @@ def fancyBin(spec, maxpow=30000, mindw=None):
     return vstack(pieces)
 
 
+def gap_by_gap(spec, func, *args, **kwargs):
+    specs = gapsplit(spec)
+    name = spec.meta.get('name', None)
+    newspecs = []
+    for spec in specs:
+        newspec = func(spec, *args, **kwargs)
+        newspecs.append(newspec)
+    return vstack(specs, name=name)
+
+
     return np.unique(np.concatenate([we, wgrid]))
 
 
