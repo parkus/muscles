@@ -21,6 +21,7 @@ import io
 import db
 import mypy.my_numpy as mnp
 from mypy import specutils
+from matplotlib import pyplot as plt # for debugging
 
 keys = ['units', 'dtypes', 'fmts', 'descriptions', 'colnames']
 spectbl_format = [rc.spectbl_format[key] for key in keys]
@@ -60,8 +61,17 @@ def gap_by_gap(spec, func, *args, **kwargs):
     for spec in specs:
         newspec = func(spec, *args, **kwargs)
         newspecs.append(newspec)
-    return vstack(specs, name=name)
+    return vstack(newspecs, name=name)
 
+
+def inst_by_inst(spec, func, *args, **kwargs):
+    specs = instsplit(spec)
+    name = spec.meta.get('name', None)
+    newspecs = []
+    for spec in specs:
+        newspec = func(spec, *args, **kwargs)
+        newspecs.append(newspec)
+    return vstack(newspecs, name=name)
 
 def max_dw_bin(spec, maxdw=1.0):
     """Rebin a spectrum to a finer resolution where it is too coarse (even though I hate doing this since it gives a
@@ -70,33 +80,15 @@ def max_dw_bin(spec, maxdw=1.0):
         return gap_by_gap(max_dw_bin, maxdw=maxdw)
 
     we = wedges(spec)
+    we = list(we)
 
-    # this is going to be hard to read, but my plan is to split the bins into the ranges where the resolution is too
-    # coarse and too fine, lay a grid over the full range, and then keep only those points within the ranges where the
-    # resolution is too coarse. Then I'll sort these into the original bins
-
-    # find alternating ranges where resolution is okay and too coarse
-    big_bins = np.diff(we) > maxdw
-    block_edges = np.nonzero(np.diff(big_bins) != 0)[0] + 1
-    block_edges = np.insert(block_edges, [0, len(block_edges)], [0, len(big_bins)])
-    w_ranges = we[block_edges]
-
-    # determine if the first range is one in which the resolution is okay or not
-    i_first_coarse = 1 if we[1] - we[0] > maxdw else 0
-
-    # sort a maxdw grid into the ranges
-    wgrid = np.arange(we[0]+ maxdw, we[-1], maxdw)
-    i_sort = np.searchsorted(w_ranges, wgrid, side='left')
-
-    # keep those in the coarse ranges
-    in_coarse = (i_sort % 2 == i_first_coarse)
-    wgrid = wgrid[in_coarse]
-
-    # delete any of the original bin edges in the coarse ranges
-    i_sort = np.searchsorted(w_ranges, we)
-
-    # splice 'em in, removing any duplicates
-    return np.unique(np.concatenate([we, wgrid]))
+    new_we = [we[0]]
+    for w in we[1:]:
+        while w - new_we[-1] > maxdw:
+            new_we.append(new_we[-1] + maxdw)
+        new_we.append(w)
+    new_we = np.array(new_we)
+    return rebin(spec, edges2bins(new_we))
 
 
 def bolo_integral(star_or_panspec, uplim=np.inf):
@@ -375,7 +367,7 @@ def gapsplit(spec_or_bins):
 
 
 def instsplit(spec):
-    instvec = spec['instrument']
+    instvec = spec['instrument'].to('').value
     insts = np.unique(instvec)
     instspecs = [spec[instvec == inst] for inst in insts]
     specs = []
@@ -567,7 +559,6 @@ def rebin(spec, newbins):
     w0, w1 = newbins.T
     newedges = bins2edges(newbins)
     oldedges = wedges(spec)
-    dwnew, dwold = map(np.diff, [newedges, oldedges])
     flux, error, flags = specutils.rebin(newedges, oldedges, spec['flux'],
                                          spec['error'], spec['flags'])
     insts = mnp.rebin(newedges, oldedges, spec['instrument'], 'or')
@@ -787,7 +778,7 @@ def add_photonflux(spectbl):
     return spectbl
 
 
-def killnegatives(spectbl, sep_insts=False, quickndirty=True, minSN=None, saveSN=3):
+def killnegatives(spectbl, sep_insts=False, quickndirty=False, minSN=None, res_limit=1.0):
     """
     Removes negative bins by summing with adjacent bins until there are no negative bins left. I.e. the resolution in
     negative areas is degraded until the flux is no longer negative.
@@ -807,84 +798,105 @@ def killnegatives(spectbl, sep_insts=False, quickndirty=True, minSN=None, saveSN
     #     return spectbl
 
     if sep_insts:
-        speclst = instsplit(spectbl)
-        speclst = map(killnegatives, speclst)
-        return  vstack(speclst)
+        return inst_by_inst(spectbl, killnegatives, sep_insts=False, quickndirty=quickndirty, minSN=minSN)
 
     if hasgaps(spectbl):
-        speclst = gapsplit(spectbl)
-        speclst = map(killnegatives, speclst)
-        return vstack(speclst)
+        return gap_by_gap(spectbl, killnegatives, sep_insts=False, quickndirty=quickndirty, minSN=minSN)
 
     w0, w1, f_dsty, e_dsty = [spectbl[s].copy() for s in ['w0', 'w1', 'flux', 'error']]
+    line_bands = np.vstack(rc.line_bands.values())
+    line_bands = line_bands[np.argsort(line_bands[:,0]), :]
+    untouchable = mnp.inranges(w0, line_bands) | mnp.inranges(w1, line_bands)
+    if minSN is None:
+        untouchable = untouchable & (f_dsty >= 0)
+    else:
+        untouchable = untouchable & (f_dsty/e_dsty >= minSN)
     dw = w1 - w0
     f, e = f_dsty*dw, e_dsty*dw
     v = e**2
 
     # I had this kind of vectorized once, but ultimately I think it just made for terrible readability with little gain in speed
+    # print "bad bins remaining:"
     while True:
         if minSN is None:
-            if not np.any(f < 0):
-                break
+            n = np.sum(f < 0)
         else:
-            if not np.any(f/np.sqrt(v) < minSN):
-                break
+            n = np.sum(f / np.sqrt(v) < minSN)
+        # print n
+        if n == 0:
+            break
 
         # find the worst offending point
         imin = np.argmin(f/np.sqrt(v)) if minSN else np.argmin(f)
 
         # integrate bins progressively outward until it no longer offends
         i0, i1 = imin-1, imin+1
-        w0bin, w1bin, fbin, vbin = f[imin], v[imin],w0[imin], w1[imin]
+        w0bin, w1bin, fbin, vbin = w0[imin], w1[imin], f[imin], v[imin]
         side = 0
         while True:
             if minSN is None:
-                if fbin > 0:
+                if fbin >= 0:
                     break
             else:
-                if fbin/sqrt(vbin) > minSN:
+                if fbin/sqrt(vbin) >= minSN:
                     break
 
             # check if we should stop integrating outward on either side
-            stop_at_0 = i0 < 0 or f[i0]/sqrt(v[i0]) > saveSN
-            stop_at_1 = i1 > len(f)-1 or f[i1]/v[i1] > saveSN
+            stop_at_0 = i0 < 0 or untouchable[i0]
+            stop_at_1 = i1 > len(f)-1 or untouchable[i1]
 
             # if can't integrate further outward, then set fbin to 0 if it is still negative and break
             if stop_at_0 and stop_at_1:
-                fbin = 0 if fbin < 0 else fbin
+                if fbin < 0:
+                    fbin, vbin = 0, 0
                 break
 
             # else incorporate the next bin
-            if side == 0:
+            if side == 0 and not stop_at_0:
                 fbin += f[i0]
                 vbin += v[i0]
                 i0 -= 1
-            else:
+            elif not stop_at_1:
                 fbin += f[i1]
                 vbin += v[i1]
-            side = not side
+                i1 += 1
+
+            # switch sides if possible
+            if stop_at_0:
+                side = 1
+            elif stop_at_1:
+                side = 0
+            else:
+                side = not side
 
         # replace the appropriate section of the vectors
-        bad_block = Slice(i0+1, i1)
-        arrays = w0, w1, f, v
-        inserts = w0[i0+1], w1[i1-1], fbin, ebin
+        bad_block = slice(i0+1, i1)
+        arrays = w0, w1, f, v, untouchable
+        wrng = w1[i1-1] - w0[i0+1]
+        if wrng > res_limit:
+            w0in = np.arange(w0[i0+1], w1[i1-1], res_limit)
+            w1in = np.append(w0in[1:], w1[i1-1])
+            dw = w1in - w0in
+            fin = fbin*dw/wrng
+            vin = vbin*dw/wrng
+            inserts = w0in, w1in, fin, vin, [False]*len(fin)
+        else:
+            inserts = w0[i0+1], w1[i1-1], fbin, vbin, False
         new_arrays = []
         for a, value in zip(arrays, inserts):
             a = np.delete(a, bad_block)
             a = np.insert(a, i0+1, value)
             new_arrays.append(a)
-        w0, w1, f, v = new_arrays
+        w0, w1, f, v, untouchable = new_arrays
 
     # return a spectbl
-    if quickndirty:
-        dw = w1 - w0
-        f_dsty, e_dsty = f/dw, np.sqrt(v)/dw
-        newtbl = vecs2spectbl(w0, w1, f_dsty, e_dsty)
-        newtbl.meta = spectbl.meta
-        return newtbl
-    else:
-        bins = np.array([w0, w1]).T
-        return rebin(spectbl, bins)
+    dw = w1 - w0
+    f_dsty, e_dsty = f / dw, np.sqrt(v) / dw
+    bins = np.array([w0, w1]).T
+    newspec = rebin(spectbl, bins)
+    newspec['flux'] = f_dsty * newspec['flux'].unit
+    newspec['error'] = e_dsty * newspec['error'].unit
+    return newspec
 
 
 def seriousflags(spec):

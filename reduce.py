@@ -67,15 +67,14 @@ def theworks(star, newphx=False, silent=False):
     io.writehlsp(star, overwrite=True)
 
 
-def adaptive_rebin_pans(star):
+def adaptive_rebin_pans(star, overwrite=False):
     pan = io.readpan(star)
     adapt = utils.killnegatives(pan, quickndirty=False)
     over = utils.evenbin(adapt, 1.0)
-
     name = pan.meta['NAME']
     adapt.meta['NAME'] = name.replace('native', 'adaptive')
     over.meta['NAME'] = name.replace('native', 'adaptive_oversampled')
-    [io.writehlsp(spec, components=False) for spec in  [adapt, over]]
+    [io.writehlsp(spec, components=False, overwrite=overwrite) for spec in [adapt, over]]
 
 
 def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr='constSN'):

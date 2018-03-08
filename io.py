@@ -419,7 +419,7 @@ def get_photometry(star, lo=0.0, hi=np.inf, silent=False):
         while j < len(tbl):
             msmt2 =tbl['sed_freq', 'sed_flux'][j]
             e2 = tbl['sed_eflux'][j]
-            if msmt1.data.tolist() == msmt2.data.tolist():
+            if msmt1.as_void() == msmt2.as_void():
                 if np.isfinite(e2):
                     if not np.isfinite(e1) or e1 == e2:
                         delline = True
@@ -563,7 +563,7 @@ def write_simple_ascii(spectbl, name, key='flux', overwrite=False):
     data = np.array([wmid, f]).T
     np.savetxt(name, data)
 
-def writehlsp(star_or_spectbl, components=True):
+def writehlsp(star_or_spectbl, components=True, overwrite=False):
     """
     Writes spectbl to a standardized MUSCLES FITS file format that also
     includes all the keywords required for the archive.
@@ -586,7 +586,7 @@ def writehlsp(star_or_spectbl, components=True):
         star = star_or_spectbl
         pfs = db.allpans(star)
         pan = read(filter(lambda s: 'native_resolution' in s, pfs))[0]
-        writehlsp(pan, components=components)
+        writehlsp(pan, components=components, overwrite=overwrite)
         dpan = read(filter(lambda s: 'dR=' in s, pfs))[0]
         writehlsp(dpan, components=False)
         return
@@ -774,7 +774,7 @@ def writehlsp(star_or_spectbl, components=True):
     for i, desc in enumerate(descriptions):
         spechdr['TDESC' + str(i+1)] = desc
 
-    if len(spectbl.meta['COMMENT']) > 1 and not pan:
+    if 'COMMENT' in spectbl.meta and len(spectbl.meta['COMMENT']) > 1 and not pan:
         spechdr['COMMENT'] = spectbl.meta['COMMENT']
 
     datas = [spectbl[col].data for col in cols]
@@ -827,7 +827,7 @@ def writehlsp(star_or_spectbl, components=True):
                     continue
                 assert len(spec) == 1
                 spec = spec[0]
-                writehlsp(spec)
+                writehlsp(spec, overwrite=overwrite)
 
     # SOURCE SPECTRA LIST
     if 'hst' in name:
@@ -881,7 +881,7 @@ def writehlsp(star_or_spectbl, components=True):
         hdus.append(srchdu)
 
     hdus = fits.HDUList(hdus)
-    hdus.writeto(hlspname, clobber=True)
+    hdus.writeto(hlspname, clobber=overwrite)
 
 
 def read_xsections(species, dissoc_only=True):

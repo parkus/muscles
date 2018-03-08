@@ -116,13 +116,14 @@ def compare_SED_versions(star, v1, v2, res='_var', binto=0.2, maxw=10000.):
     Parameters
     ----------
     star
-    v1
+    v1 use string with leading v, e.g. v22
     v2
 
     Returns
     -------
 
     """
+    v1, v2 = map(str, [v1, v2])
     fig, axs = plt.subplots(2, 1, sharex=True, sharey=True)
     def plotspec(version, ax):
         f, = db.findfiles(rc.hlsppath, star, 'broadband', version, res)
@@ -133,6 +134,7 @@ def compare_SED_versions(star, v1, v2, res='_var', binto=0.2, maxw=10000.):
         piecespec(spec)
         plt.text(0.05, 0.9, version, transform=ax.transAxes)
     s1, s2 = map(plotspec, [v1, v2], axs)
+    plt.title(star)
 
 
 def vetcoadd(star, config):

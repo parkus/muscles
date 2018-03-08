@@ -14,6 +14,7 @@ import json
 from astropy.io import fits
 from pandas import read_json
 import scicatalog.scicatalog as sc
+from astropy import constants as const, units as u
 
 version = '22'
 
@@ -27,12 +28,12 @@ photometrypath = datapath + '/photometry'
 productspath = local + '/products'
 hlsppath = productspath + '/hlsp'
 scratchpath = root + '/scratchwork'
-solarpath = local + '/solar'
+solarpath = gdrive + '/Datasets/shared/solar'
 photondir = datapath + '/photons'
 flaredir = productspath + '/flare_catalogs'
 proppath = root + '/share/starprops'
 moviepath = productspath + '/movies'
-filterpath = '/Users/parke/Datasets/shared/filter response curves'
+filterpath =  gdrive + '/Datasets' + '/shared/filter response curves'
 sharepath = root +'/share'
 xsectionpath = local + '/xsections'
 normfac_file = local + '/normfac_log.json'
@@ -59,8 +60,8 @@ stars = list(starprops.values.sort_values('Teff_muscles').index)
 observed = [star for star in stars if starprops['observed'][star]]
 hosts = [star for star in stars if starprops['host'][star]]
 
-# with open(normfac_file) as f: # FIXME: uncomment once I have datasets transfered
-#     normfacs = json.load(f)
+with open(normfac_file) as f:
+    normfacs = json.load(f)
 
 insolation = 1361000. # cgs
 
@@ -90,8 +91,8 @@ phxZgrid = np.hstack([np.arange(-4.0, -2.0, 1.0),
                    np.arange(-2.0, 1.1, 0.5)])
 phxagrid = np.arange(-0.2, 1.3, 0.2)
 phxgrids = [phxTgrid, phxggrid, phxZgrid, phxagrid]
-# phxwave = fits.getdata(os.path.join(phxrepo, 'wavegrid_hires.fits')) # FIXME: uncomment once I have datasets transfered
-# phxwave = np.hstack([[499.95], midpts(phxwave), [54999.875]])
+phxwave = fits.getdata(os.path.join(phxrepo, 'wavegrid_hires.fits'))
+phxwave = np.hstack([[499.95], midpts(phxwave), [54999.875]])
 
 
 def phxurl(Teff, logg=4.5, FeH=0.0, aM=0.0, repo='ftp'):
@@ -261,7 +262,7 @@ HLSPinstruments = {'cos':'COS', 'sts':'STIS', 'euv':'EUV-SCALING', 'lya':'LYA-RE
 HLSPgratings = {'g130m':'G130M', 'g160m':'G160M', 'g430l':'G430L', 'g430m':'G430M', 'g140m':'G140M', 'e230m':'E230M',
                 'e230h':'E230H', 'g230l':'G230L', 'e140m':'E140M', 'fill-':'NA', '-----':'NA', 'young':'NA',
                 'pn---':'PN', 'multi':'MULTI', 'other':'NA', 'g750l':'G750L', 'g230lb':'G230LB', 'g570h':'g570H',
-                'g780h':'G780H'}
+                'g780h':'G780H', 'g140l':'G140L'}
 
 
 def getinststr(inst_val):
@@ -435,3 +436,28 @@ def loadsettings(star):
     ss.wave_offsets = safeget('wave_offsets')
     ss.order = safeget('order')
     return ss
+
+
+#region LINE RANGES
+band_dv = 100 * u.km/u.s
+line_centers = {'c2': [1334.532, 1335.708], 'si3': [1206.51], 'si4': [1393.76, 1402.77], 'n5': [1238.821, 1242.804],
+                'c4': [1548.202, 1550.774], 'mg2':[2796.352, 2803.530],
+                'he2':[1640.4], 'o1':[1302.17, 1304.86, 1306.03], 'al2':[1670.79],
+                'c3':[1174.93, 1175.26, 1175.59, 1175.71, 1175.99, 1176.37], 'si2':[1808.00, 1816.92]}
+def getbands(v0, v1, centers):
+    fracs = u.Quantity([v0, v1])/const.c
+    fracs = fracs.decompose().value
+    centers = np.array(centers)
+    bands = centers[:, np.newaxis] * (1 + fracs[np.newaxis, :])
+    if len(bands) > 1:
+        l, r = bands.T
+        i_delete, = np.nonzero(r[:-1] >= l[1:])
+        bands = np.array([np.delete(l, i_delete+1), np.delete(r, i_delete)]).T
+    return bands
+
+line_bands = {}
+for key in line_centers:
+    line_bands[key] = getbands(-band_dv, band_dv, line_centers[key])
+line_bands['lya'] = [lyacut]
+#endregion
+

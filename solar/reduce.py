@@ -100,7 +100,7 @@ def EVEFlareCat2FITS(savdata=None):
 
     if savdata is None:
         print 'Reading in the data. Note that this takes a minute or two.'
-        savdata = readsav(path.join(rc.solarpath, 'u_sdo_eve_-----_sun_flare_catalog.sav'))
+        savdata = readsav('/Users/parke/Google Drive/Datasets/shared/solar/sdo_eve_sun_flare_catalog.sav')
 
     EVEcat = savdata['flare_catalog']['EVL']
 
@@ -111,6 +111,7 @@ def EVEFlareCat2FITS(savdata=None):
 
     # I'll make a separate FITS table for each of these
     linelabels = EVEcat[0]['evl_lines'][0]['evl_label']
+    bandlabels = EVEcat[0]['evl_bands'][0]['evl_label']
 
     # Those tables will contain these columns
     keys = ['preflare_irrad', 'peak_irrad', 'peak_time_jd', 'rise_25_time_jd', 'rise_50_time_jd', 'rise_75_time_jd',
@@ -125,66 +126,78 @@ def EVEFlareCat2FITS(savdata=None):
 
     # loop through and make each table
     fitstbls = []
-    for iline in range(len(linelabels)):
+    def dostuff(labels, type='lines'):
+        for iline in range(len(labels)):
 
-        # make dictionary of empty lists for appending to
-        cols = {}
-        for key in keys:
-            cols[key] = []
-
-        # parse the data for the line for all flares
-        for flare in EVEcat:
-            flare = flare['evl_lines'][0]
+            # make dictionary of empty lists for appending to
+            cols = {}
             for key in keys:
-                cols[key].append(flare[iline][key])
+                cols[key] = []
 
-        # add some stuff...
-        cols['peak_norm'] = np.array(cols['peak_irrad'])/cols['preflare_irrad']
-        cols['pew'] = np.array(cols['energy_75'])/cols['preflare_irrad']
+            # parse the data for the line for all flares
+            for flare in EVEcat:
+                flare = flare['evl_' + type][0]
+                for key in keys:
+                    cols[key].append(flare[iline][key])
 
-        # groom the columns a bit by converting to arrays and changing some units where desired
-        for key in cols:
-            cols[key] = np.array(cols[key])
-            if 'energy' in key:
-                cols[key] = cols[key] * u.J / u.m**2
-                cols[key] = cols[key] * (4*np.pi*(u.AU)**2)
-                cols[key] = cols[key].to(u.erg).value
-            if 'irrad' in key:
-                cols[key] = cols[key] * u.W / u.m**2
-                cols[key] = cols[key].cgs.value
+            # add some stuff...
+            cols['peak_norm'] = np.array(cols['peak_irrad'])/cols['preflare_irrad']
+            cols['pew'] = np.array(cols['energy_25'])/cols['preflare_irrad']
 
-        # add cumulative frequency
-        for ekey in ['energy_75', 'pew']:
-            e = cols[ekey]
-            bad = (e <= 0.0) | np.isnan(e)
-            e[bad] = -np.inf
-            argsort = np.argsort(cols[ekey])[::-1]  # bad flares will be sorted to end
-            nflares = np.arange(len(EVEcat)) + 1.0
-            cumfreq = nflares/expt
-            cumfreq[argsort] = cumfreq.copy()
-            cumfreq[bad] = np.nan
-            cols[ekey[0].upper() + 'cumfreq'] = cumfreq
+            # groom the columns a bit by converting to arrays and changing some units where desired
+            for key in cols:
+                cols[key] = np.array(cols[key])
+                if 'energy' in key:
+                    cols[key] = cols[key] * u.J / u.m**2
+                    cols[key] = cols[key] * (4*np.pi*(u.AU)**2)
+                    cols[key] = cols[key].to(u.erg).value
+                if 'irrad' in key:
+                    cols[key] = cols[key] * u.W / u.m**2
+                    cols[key] = cols[key].cgs.value
 
-        # parse line info
-        linelabel = linelabels[iline]
-        pieces = linelabel.split(' ')
-        name = ''.join(pieces[1:3])
-        wave = float(pieces[3]) * 10.0 # AA
-        Tform = float(pieces[-1][2:5])
+            # add cumulative frequency
+            for ekey in ['energy_25', 'pew']:
+                e = cols[ekey]
+                bad = (e <= 0.0) | np.isnan(e)
+                e[bad] = -np.inf
+                argsort = np.argsort(cols[ekey])[::-1]  # bad flares will be sorted to end
+                nflares = np.arange(len(EVEcat)) + 1.0
+                cumfreq = nflares/expt
+                cumfreq[argsort] = cumfreq.copy()
+                cumfreq[bad] = np.nan
+                cols[ekey[0].upper() + 'cumfreq'] = cumfreq
 
-        # now create a fits bintable
-        hdr = fits.Header()
-        hdr['ion'] = name
-        hdr['wave'] = wave
-        hdr['logTform'] = Tform
-        arrays = [cols[key] for key in (keys + ['pew', 'peak_norm', 'Pcumfreq', 'Ecumfreq'])]
-        colsFITS = [fits.Column(array=a, name=n, unit=ut, format=dt)
-                    for a,n,ut,dt in zip(arrays, colnames, units, dtypes)]
-        tbl = fits.BinTableHDU.from_columns(colsFITS, header=hdr)
-        tbl.name = name
-        fitstbls.append(tbl)
+            # parse line info
+            linelabel = labels[iline]
+            if type == 'lines':
+                pieces = linelabel.split(' ')
+                name = ''.join(pieces[1:3])
+                wave = float(pieces[3]) * 10.0 # AA
+                Tform = float(pieces[-1][2:5])
+            else:
+                name = linelabel
+
+            # now create a fits bintable
+            hdr = fits.Header()
+            if type == 'lines':
+                hdr['ion'] = name
+                hdr['wave'] = wave
+                hdr['logTform'] = Tform
+                tblname = name + '{:.0f}'.format(float(wave))
+            else:
+                hdr['band'] = name
+                tblname = name
+            arrays = [cols[key] for key in (keys + ['pew', 'peak_norm', 'Pcumfreq', 'Ecumfreq'])]
+            colsFITS = [fits.Column(array=a, name=n, unit=ut, format=dt)
+                        for a,n,ut,dt in zip(arrays, colnames, units, dtypes)]
+            tbl = fits.BinTableHDU.from_columns(colsFITS, header=hdr)
+            tbl.name = tblname
+            fitstbls.append(tbl)
+
+    dostuff(linelabels, 'lines')
+    dostuff(bandlabels, 'bands')
 
     # prepend a primary hdu and save the fits file
     pri = fits.PrimaryHDU()
     hdus = fits.HDUList([pri] + fitstbls)
-    hdus.writeto(path.join(rc.solarpath, 'u_sdo_eve_-----_sun_flare_catalog.fits'), clobber=True)
+    hdus.writeto(path.join(rc.solarpath, '/Users/parke/Google Drive/Datasets/shared/solar/sdo_eve_sun_flare_catalog.fits'), overwrite=True)
