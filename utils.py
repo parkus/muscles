@@ -4,6 +4,7 @@ Created on Tue Nov 18 18:02:03 2014
 
 @author: Parke
 """
+from __future__ import division, print_function, absolute_import
 from _warnings import warn
 from math import ceil, log10, sqrt
 from os import path
@@ -16,12 +17,13 @@ from astropy import units as u
 from scipy.signal import argrelmax
 from scipy.integrate import quad
 
-import rc
-import io
-import db
+from . import rc
+from . import io
+from . import db
 import mypy.my_numpy as mnp
 from mypy import specutils
 from matplotlib import pyplot as plt # for debugging
+from functools import reduce
 
 keys = ['units', 'dtypes', 'fmts', 'descriptions', 'colnames']
 spectbl_format = [rc.spectbl_format[key] for key in keys]
@@ -129,7 +131,7 @@ def flux_integral(spectbl, wa=None, wb=None, normed=False):
             wa, wb = rng
         elif rng.size > 2:
             results = [flux_integral(spectbl, _rng, normed=normed) for _rng in rng]
-            fluxes, errs = zip(*results)
+            fluxes, errs = list(zip(*results))
             return np.sum(fluxes), np.quadsum(errs)
 
     if wa is not None:
@@ -166,7 +168,7 @@ def add_frequency(spectbl):
     wave2freq = lambda w: (const.c/w).to(u.Hz).value
     w0, w1, flam = [spectbl[s] for s in ['w0', 'w1', 'flux']]
     F = flam*(w1 - w0)
-    v0, v1 = map(wave2freq, [w0, w1])
+    v0, v1 = list(map(wave2freq, [w0, w1]))
     fnu = F/(v0 - v1)*1e23 # Jy
     spectbl['v0'] = v0
     spectbl['v1'] = v1
@@ -302,7 +304,7 @@ def list2spectbl(datalist, star='', filename='', name='', sourcespecs=[],
     #expand any scalar values
     N = len(datalist[2]) #length of flux vector
     expand = lambda vec: vec if hasattr(vec, '__iter__') else np.array([vec]*N)
-    datalist = map(expand, datalist)
+    datalist = list(map(expand, datalist))
 
     #make table
     cols = [Column(d,n,dt,description=dn,unit=u,format=f) for d,n,dt,dn,u,f in
@@ -328,11 +330,11 @@ def vstack(spectbls, name='', reckless=False):
             raise ValueError("Don't try to stack tables from different stars.")
     star = stars[0]
 
-    spectbls = filter(lambda s: len(s) > 0, spectbls)
+    spectbls = [s for s in spectbls if len(s) > 0]
 
     getbeg = lambda s: s['w0'][0]
     getend = lambda s: s['w1'][-1]
-    begs, ends = np.array(map(getbeg, spectbls)), np.array(map(getend, spectbls))
+    begs, ends = np.array(list(map(getbeg, spectbls))), np.array(list(map(getend, spectbls)))
     assert np.all(begs[1:] >= ends[:-1])
 
     sourcespecs = []
@@ -380,14 +382,14 @@ def instsplit(spec):
 def overlapping(spec_or_bins_a, spec_or_bins_b):
     """Check if there is any overlap."""
     getbins = lambda sob: sob if type(sob) is np.ndarray else wbins(sob)
-    wbinsa, wbinsb = map(getbins, [spec_or_bins_a, spec_or_bins_b])
+    wbinsa, wbinsb = list(map(getbins, [spec_or_bins_a, spec_or_bins_b]))
     ainb0, ainb1 = [mnp.inranges(w, wbinsb, [0, 0]) for w in wbinsa.T]
     bina0, bina1 = [mnp.inranges(w, wbinsa, [0, 0]) for w in wbinsb.T]
     return np.any(ainb0 | ainb1) or np.any(bina0 | bina1)
 
 def overlap_ranges(spec_or_bins_a, spec_or_bins_b,):
     """Find the ranges over which two spectbls overlap."""
-    ar, br = map(gapless_ranges, [spec_or_bins_a, spec_or_bins_b])
+    ar, br = list(map(gapless_ranges, [spec_or_bins_a, spec_or_bins_b]))
     return mnp.range_intersect(ar, br)
 
 def keepranges(spectbl, *args, **kwargs):
@@ -496,7 +498,7 @@ def gapless_ranges(spec_or_bins):
     if w0 is None:
         return np.empty([0,2])
     gaps = np.nonzero(w0[1:] != w1[:-1])[0] + 1
-    w0s, w1s = map(np.split, [w0, w1], [gaps, gaps])
+    w0s, w1s = list(map(np.split, [w0, w1], [gaps, gaps]))
     ranges = [[ww0[0], ww1[-1]] for ww0, ww1 in zip(w0s, w1s)]
     return np.array(ranges)
 
@@ -809,7 +811,7 @@ def killnegatives(spectbl, sep_insts=False, quickndirty=False, minSN=None, res_l
         return gap_by_gap(spectbl, killnegatives, sep_insts=False, quickndirty=quickndirty, minSN=minSN)
 
     w0, w1, f_dsty, e_dsty = [spectbl[s].copy() for s in ['w0', 'w1', 'flux', 'error']]
-    line_bands = np.vstack(rc.line_bands.values())
+    line_bands = np.vstack(list(rc.line_bands.values()))
     line_bands = line_bands[np.argsort(line_bands[:,0]), :]
     untouchable = mnp.inranges(w0, line_bands) | mnp.inranges(w1, line_bands)
     if minSN is None:

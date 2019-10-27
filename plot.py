@@ -4,10 +4,10 @@ Created on Wed Nov 19 12:11:41 2014
 
 @author: Parke
 """
-
+from __future__ import division, print_function, absolute_import
 import matplotlib.pyplot as plt
 from mypy.specutils import plot as specplot
-import rc, io, utils, db
+from . import rc, io, utils, db
 import numpy as np
 
 stars = rc.stars
@@ -73,7 +73,7 @@ def earth_from_bol_axis(ax_bol):
     # and make it update when the other updates
     def update_earth_ax(ax_bol):
         y0b, y1b = ax_bol.get_ylim()
-        y0e, y1e = map(utils.bol2sol, [y0b, y1b])
+        y0e, y1e = list(map(utils.bol2sol, [y0b, y1b]))
         ax_earth.set_ylim(y0e, y1e)
         ax_earth.figure.canvas.draw()
     ax_bol.callbacks.connect("ylim_changed", update_earth_ax)
@@ -246,7 +246,7 @@ def getcurves():
         offset += np.max(yy + ee)
         offset += 0.2
 
-    stuff = zip(s, y, e, flarepts, maxnorm, offsets)
+    stuff = list(zip(s, y, e, flarepts, maxnorm, offsets))
     return stuff
 
 def setupAxes():

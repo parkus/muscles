@@ -6,12 +6,14 @@ Created on Wed Dec 10 15:22:01 2014
 
 @author: Parke
 """
+from __future__ import division, print_function, absolute_import
+
 import matplotlib.pyplot as plt
 from astropy.table import Table
 from astropy.io import fits
-import rc, io, utils, db
-import reduce as red
-from plot import specstep
+from . import rc, io, utils, db
+from . import reduce as red
+from .plot import specstep
 import numpy as np
 from os import path
 from math import ceil, floor
@@ -66,7 +68,7 @@ def HSTcountregions(specfile, scale='auto'):
                 td = fits.getdata(tagfile, 1)
             except IOError:
                 if seg == 'b':
-                    print 'segment {} tag file not found'.format(seg)
+                    print('segment {} tag file not found'.format(seg))
                     continue
                 else:
                     raise IOError()
@@ -93,7 +95,7 @@ def HSTcountregions(specfile, scale='auto'):
 def piecespec(spec, err=True):
     """Plot a spectrum color-coded by source instrument."""
     insts = np.unique(spec['instrument'])
-    insts = filter(lambda i: np.log2(i) % 1 == 0, insts)
+    insts = [i for i in insts if np.log2(i) % 1 == 0]
     for i in insts:
         keep = (spec['instrument'] == i)
         thisspec = spec[keep]
@@ -123,7 +125,7 @@ def compare_SED_versions(star, v1, v2, res='_var', binto=0.2, maxw=10000.):
     -------
 
     """
-    v1, v2 = map(str, [v1, v2])
+    v1, v2 = list(map(str, [v1, v2]))
     fig, axs = plt.subplots(2, 1, sharex=True, sharey=True)
     def plotspec(version, ax):
         f, = db.findfiles(rc.hlsppath, star, 'broadband', version, res)
@@ -133,7 +135,7 @@ def compare_SED_versions(star, v1, v2, res='_var', binto=0.2, maxw=10000.):
         plt.axes(ax)
         piecespec(spec)
         plt.text(0.05, 0.9, version, transform=ax.transAxes)
-    s1, s2 = map(plotspec, [v1, v2], axs)
+    s1, s2 = list(map(plotspec, [v1, v2], axs))
     plt.title(star)
 
 
@@ -201,7 +203,7 @@ def vetnormfacs(spec, panspec, normfac, normranges):
     overbins = []
     for normrange in normranges:
         getbins = lambda s: utils.wbins(utils.keepranges(s, normrange))
-        possible_bins = map(getbins, [spec, panspec])
+        possible_bins = list(map(getbins, [spec, panspec]))
         bins = min(possible_bins, key=lambda b: len(b))
         overbins.append(bins)
     overbins = np.vstack(overbins)
@@ -210,7 +212,7 @@ def vetnormfacs(spec, panspec, normfac, normranges):
     def coarsebin(s):
         overspec = utils.rebin(s, overbins)
         return red.splice(s, overspec)
-    spec, panspec = map(coarsebin, [spec, panspec])
+    spec, panspec = list(map(coarsebin, [spec, panspec]))
 
     # plot the spectrum being normalized, highlighting the normranges
     plt.figure()
@@ -269,10 +271,10 @@ def HSTimgregions(specfile, scale=0.3):
     clip = 2 if custom else 1
     newfile = lambda suffix: '_'.join(pieces[:-clip] + [suffix])
     if custom:
-        imgfiles = map(newfile, ['x2d.fits', 'sx2.fits'])
+        imgfiles = list(map(newfile, ['x2d.fits', 'sx2.fits']))
     else:
-        imgfiles = map(newfile, ['crj.fits', 'sfl.fits', 'flt.fits'])
-    imgfile = filter(path.exists, imgfiles)
+        imgfiles = list(map(newfile, ['crj.fits', 'sfl.fits', 'flt.fits']))
+    imgfile = list(filter(path.exists, imgfiles))
     assert len(imgfile) == 1
     imgfile = imgfile[0]
 
@@ -317,17 +319,17 @@ def compareEUV(star):
     euvfile = db.findfiles('u', 'euv', star, fullpaths=True)[0]
     w,f,_ = np.loadtxt(euvfile).T
     I0 = np.trapz(f, w)
-    print 'Trapz from Allison\'s file: %g' % I0
+    print('Trapz from Allison\'s file: %g' % I0)
     spec = io.read(euvfile)[0]
     I1 = np.sum((spec['w1'] - spec['w0']) * spec['flux'])
-    print 'Direct integration from spectbl version of Allison\'s file: %g' % I1
+    print('Direct integration from spectbl version of Allison\'s file: %g' % I1)
     I2 = np.trapz(spec['flux'], (spec['w0'] + spec['w1'])/2.0)
-    print 'Trapz from spectbl version of Allison\'s file: %g' % I2
+    print('Trapz from spectbl version of Allison\'s file: %g' % I2)
     p = io.read(db.panpath(star))[0]
     keep = p['instrument'] == rc.getinsti('mod_euv_young')
     p = p[keep]
     I3 = np.sum((spec['w1'] - spec['w0']) * spec['flux'])
-    print 'Direct integration from panspec EUV portion: %g' % I3
+    print('Direct integration from panspec EUV portion: %g' % I3)
 
 
 def stackpans(range=[1310,1350], keeprange=[1100,2000], xlim=None, norm=True, offfac=1.0):

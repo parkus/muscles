@@ -4,11 +4,13 @@ Created on Fri Nov 07 15:51:54 2014
 
 @author: Parke
 """
+from __future__ import division, print_function, absolute_import
+
 import os
 from mypy.my_numpy import midpts
 import numpy as np
 from itertools import product as iterproduct
-from urllib import urlretrieve
+from urllib.request import urlretrieve
 from math import ceil
 import json
 from astropy.io import fits
@@ -133,12 +135,12 @@ def fetchphxfiles(Trng=[2500,3500], grng=[4.0,5.5], FeHrng=[0.0, 0.0],
             x = [np.max(grid[grid < x]), np.min(grid[grid > x])]
         return x
     rngs = [Trng, grng, FeHrng, aMrng]
-    rngs = map(makerng, rngs, phxgrids)
+    rngs = list(map(makerng, rngs, phxgrids))
 
     def inclusive(grid, rng):
         use = np.logical_and(grid >= rng[0], grid <= rng[1])
         return grid[use]
-    grids = map(inclusive, phxgrids, rngs)
+    grids = list(map(inclusive, phxgrids, rngs))
 
     combos = iterproduct(*grids)
     paths = []
@@ -149,14 +151,14 @@ def fetchphxfiles(Trng=[2500,3500], grng=[4.0,5.5], FeHrng=[0.0, 0.0],
 
     N = len(paths)
     datasize = N*6.0/1024.0
-    print ('Beginning download of {} files, {:.3f} Gb. Ctrl-C to stop.'
-           ''.format(N,datasize))
-    print 'Progress bar (- = 5%):\n'
+    print(('Beginning download of {} files, {:.3f} Gb. Ctrl-C to stop.'
+           ''.format(N,datasize)))
+    print('Progress bar (- = 5%):\n')
 
     Nbar = ceil(N/20.0)
     for i,(loc, ftp) in enumerate(paths):
         if i % Nbar == 0:
-            print '-',
+            print('-', end=' ')
         urlretrieve(ftp,loc)
 
 def phxpath(star):
@@ -279,7 +281,7 @@ def getinsti(instrument):
 
 
 def expand_inst_abbrv(abbrv):
-    insts = filter(lambda s: abbrv in s, instruments)
+    insts = [s for s in instruments if abbrv in s]
     if len(insts) > 1:
         raise ValueError('More than one match.')
     elif len(insts) == 0:
@@ -355,7 +357,7 @@ class StarSettings:
 
     def get_wave_offset(self, config):
         configmatch = lambda s: s in config
-        configs = filter(configmatch, self.wave_offsets['configs'])
+        configs = list(filter(configmatch, self.wave_offsets['configs']))
         if len(configs) > 1:
             raise ValueError('multiple wave offset matches')
         elif len(configs) == 1:
@@ -366,7 +368,7 @@ class StarSettings:
 
     def get_custom_extraction(self, config):
         configmatch = lambda s: config in s['config']
-        configs = filter(configmatch, self.custom_extractions)
+        configs = list(filter(configmatch, self.custom_extractions))
         if len(configs) > 1:
             raise ValueError('multiple custom range matches')
         elif len(configs) == 1:
@@ -383,7 +385,7 @@ class StarSettings:
 
     def get_custom_range(self, config):
         configmatch = lambda s: s in config
-        configs = filter(configmatch, self.custom_ranges['configs'])
+        configs = list(filter(configmatch, self.custom_ranges['configs']))
         if len(configs) > 1:
             raise ValueError('multiple custom range matches')
         elif len(configs) == 1:
@@ -394,7 +396,7 @@ class StarSettings:
 
     def get_norm_range(self, config):
         configmatch = lambda s: s in config
-        configs = filter(configmatch, self.norm_ranges['configs'])
+        configs = list(filter(configmatch, self.norm_ranges['configs']))
         if len(configs) > 1:
             raise ValueError('multiple custom range matches')
         elif len(configs) == 1:

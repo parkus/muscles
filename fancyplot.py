@@ -1,8 +1,10 @@
+from __future__ import division, print_function, absolute_import
+
 import mypy.plotutils as pu
 import matplotlib.pyplot as plt
 import os
 import mypy.my_numpy as mnp
-import rc, io, reduce, db, utils, plot
+from . import rc, io, reduce, db, utils, plot
 import matplotlib as mpl
 import itertools
 import uneven as un
@@ -163,7 +165,7 @@ def stars3DMovieFrames(size, azRate=1.0, altRate=0.0, frames=360, dirpath='muscl
     if not os.path.exists(dirpath):
         os.mkdir(dirpath)
 
-    for i in xrange(frames):
+    for i in range(frames):
         filename = '{:03d}.png'.format(i)
         filepath = os.path.join(dirpath, filename)
         mlab.savefig(filepath, figure=fig, size=size)
@@ -183,7 +185,7 @@ def lightcurveCompendium(stars='hosts', figure=None, flarecut=2.0, flarelabel='S
         colors = itertools.cycle(['k'])
     inst = 'hst_cos_g130m'
     if stars == 'hosts':
-        stars = filter(lambda s: len(db.findfiles('u', inst, 'corrtag_a', s)) >= 4, rc.observed)
+        stars = [s for s in rc.observed if len(db.findfiles('u', inst, 'corrtag_a', s)) >= 4]
 
     ## SET UP AXES
     ## -----------
@@ -212,8 +214,8 @@ def lightcurveCompendium(stars='hosts', figure=None, flarecut=2.0, flarelabel='S
         # get flare info
         flares, bands = io.readFlareTbl(star, inst, flarelabel)
 
-        curve = reduce.auto_curve(star, inst, dt=30.0, bands=bands, groups=[range(len(bands))])
-        t0, t1, cps, err = zip(*curve)[0]
+        curve = reduce.auto_curve(star, inst, dt=30.0, bands=bands, groups=[list(range(len(bands)))])
+        t0, t1, cps, err = list(zip(*curve))[0]
 
         t = (t0 + t1) / 2.0
 
@@ -340,7 +342,7 @@ def flareCompare(inst='cos_g130m', band='SiIV', nflares=3, ax=None):
     flares = reduce.combine_flarecats(band, inst)
     flares = flares[:nflares]
     bands, dt = flares.meta['BANDS'], flares.meta['DT']
-    groups = [range(len(bands))]
+    groups = [list(range(len(bands)))]
 
     mxpeak = max(flares['pkratio'])
 
@@ -381,7 +383,7 @@ def flareCompare(inst='cos_g130m', band='SiIV', nflares=3, ax=None):
 def spectrumMovieFrames(star, inst, band, trange, dt, smoothfac, axspec, axcurve, folder, dpi=80, velocityplot=False,
                         reftrange=None, dryRun=False, ylim=None):
     ph, photons = io.readphotons(star, inst)
-    band, trange, reftrange = map(np.asarray, [band, trange, reftrange])
+    band, trange, reftrange = list(map(np.asarray, [band, trange, reftrange]))
 
     fig = axcurve.get_figure()
     figwidth = fig.get_figwidth()
@@ -511,9 +513,9 @@ def showFlareStats(star, inst, label, trange, dt=30.0, ax=None):
     flareTbl, bands = io.readFlareTbl(star, inst, label)
 
     # make lightcurve
-    groups = [range(len(bands))]
+    groups = [list(range(len(bands)))]
     curve = reduce.auto_curve(star, inst, bands, dt, appx=False, groups=groups, fluxed=True)
-    t0, t1, flux, err = zip(*curve)[0]
+    t0, t1, flux, err = list(zip(*curve))[0]
     t = (t0 + t1) / 2.0
 
     # narrow lightcurve down to range of interest
@@ -642,7 +644,7 @@ def specSnapshot(star, inst, trange, wrange, n=100, ax=None, vCen=None, maxpts=5
     if vCen is not None:
         w = velocify(w)
         ax.set_xlabel('Doppler Velocity [km s$^{-1}$]')
-        ax.set_xlim(map(velocify, wrange))
+        ax.set_xlim(list(map(velocify, wrange)))
     else:
         ax.set_xlabel('Wavelength [$\AA$]')
         ax.set_xlim(wrange)

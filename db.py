@@ -1,7 +1,10 @@
-import rc, io
+from __future__ import division, print_function, absolute_import
+
+from . import rc, io
 import os
 import numpy as np
 from astropy.io import fits
+from functools import reduce
 
 
 def findfiles(path_or_band, *substrings, **kwargs):
@@ -16,7 +19,7 @@ def findfiles(path_or_band, *substrings, **kwargs):
         hasstring = [(s in name) for s in substrings]
         return all(hasstring)
 
-    files = filter(good, os.listdir(path_or_band))
+    files = list(filter(good, os.listdir(path_or_band)))
     if 'fullpaths' in kwargs and kwargs['fullpaths'] == False:
         return files
 
@@ -54,17 +57,17 @@ def findsimilar(specfile, newstring):
 def configfiles(star, configstring):
     """Find the spectra for the star that match configstring."""
     allfiles = allspecfiles(star)
-    return filter(lambda f: configstring in f, allfiles)
+    return [f for f in allfiles if configstring in f]
 
 
 def choosesourcespecs(specfiles):
     """Given a list of specfiles, remove coadds and replace originals
     with custom files."""
     # get rid of reduced files
-    specfiles = filter(lambda s: not ('coadd' in s or 'custom' in s), specfiles)
+    specfiles = [s for s in specfiles if not ('coadd' in s or 'custom' in s)]
 
     # remove any non-spec files
-    specfiles = filter(isspec, specfiles)
+    specfiles = list(filter(isspec, specfiles))
 
     for i, s in enumerate(specfiles):
         if os.path.getsize(s) == 0:
@@ -81,7 +84,7 @@ def sourcespecfiles(star, configstring):
 def coaddfile(star, configstring):
     """The coadd file for a config and star."""
     allfiles = allspecfiles(star)
-    f = filter(lambda f: configstring in f and 'coadd' in f, allfiles)
+    f = [f for f in allfiles if configstring in f and 'coadd' in f]
     if len(f) > 1:
         raise Exception('Multiple files found.')
     else:
@@ -91,7 +94,7 @@ def coaddfile(star, configstring):
 def customfile(star, configstring):
     """The custom extraction file for a config and star."""
     allfiles = allspecfiles(star)
-    f = filter(lambda f: configstring in f and 'custom_spec' in f, allfiles)
+    f = [f for f in allfiles if configstring in f and 'custom_spec' in f]
     if len(f) > 1:
         raise Exception('Multiple files found.')
     else:
@@ -110,8 +113,8 @@ def allspecfiles(star):
     files = []
     for sf in folders:
         allfiles = os.listdir(sf)
-        starfiles = filter(hasstar, allfiles)
-        specfiles = filter(isspec, starfiles)
+        starfiles = list(filter(hasstar, allfiles))
+        specfiles = list(filter(isspec, starfiles))
         specfiles = [os.path.join(rc.datapath, sf, f) for f in specfiles]
         files.extend(specfiles)
 
@@ -131,9 +134,9 @@ def panfiles(star):
 
     allfiles = allsourcefiles(star)
     use = lambda name: any([s in name for s in rc.instruments])
-    allfiles = filter(use, allfiles)
-    filterfiles = lambda s: filter(lambda ss: s == parse_info(ss, 1, 4), allfiles)
-    files = map(filterfiles, rc.instruments)
+    allfiles = list(filter(use, allfiles))
+    filterfiles = lambda s: [ss for ss in allfiles if s == parse_info(ss, 1, 4)]
+    files = list(map(filterfiles, rc.instruments))
     files = reduce(lambda x, y: x + y, files)
 
     # sub in custom extractions
@@ -141,7 +144,7 @@ def panfiles(star):
     files = sub_coaddfiles(files)
 
     # parse out lya file
-    lyafile = filter(lambda f: 'mod_lya' in f, files)
+    lyafile = [f for f in files if 'mod_lya' in f]
     assert len(lyafile) <= 1
     if len(lyafile):
         lyafile = lyafile[0]
@@ -154,9 +157,9 @@ def panfiles(star):
 
 def solarfiles(date):
     files = os.listdir(rc.solarpath)
-    files = filter(lambda s: date in s, files)
-    ufile = filter(lambda s: 'u' == s[0], files)[0]
-    vfile = filter(lambda s: 'v' == s[0], files)[0]
+    files = [s for s in files if date in s]
+    ufile = [s for s in files if 'u' == s[0]][0]
+    vfile = [s for s in files if 'v' == s[0]][0]
     ufile, vfile = [os.path.join(rc.solarpath, f) for f in (ufile, vfile)]
     return ufile, vfile
 
@@ -164,7 +167,7 @@ def solarfiles(date):
 def lyafile(star):
     """Find the file with the best Lya data for star."""
     files = findfiles('uv', star, 'sts', '140')
-    files = filter(isspec, files)
+    files = list(filter(isspec, files))
     files = [os.path.join(rc.datapath, 'uv', f) for f in files]
     files = sub_customfiles(files)
     files = sub_coaddfiles(files)
@@ -227,7 +230,7 @@ def allpans(star):
     """All panspec files for a star."""
     allfiles = os.listdir(rc.productspath)
     identifier = '{}_panspec'.format(star)
-    panfiles = filter(lambda s: identifier in s, allfiles)
+    panfiles = [s for s in allfiles if identifier in s]
     return [os.path.join(rc.productspath, pf) for pf in panfiles]
 
 
@@ -267,7 +270,7 @@ def group_by_instrument(lst):
         specfiles = lst
     else:
         specfiles = [spec.meta['FILENAME'] for spec in lst]
-    allinsts = np.array(map(parse_instrument, specfiles))
+    allinsts = np.array(list(map(parse_instrument, specfiles)))
     insts, ind = np.unique(allinsts, return_index=True)
     insts = insts[np.argsort(ind)]
 
@@ -303,7 +306,7 @@ def photonpath(star, inst, seg=''):
 
 
 def flarepath(star, inst, label):
-    inst = filter(lambda s: inst in s, rc.instruments)
+    inst = [s for s in rc.instruments if inst in s]
     assert len(inst) == 1
     inst = inst[0]
     name = '_'.join([inst, star, label, 'flares'])
@@ -353,7 +356,7 @@ def auto_rename(folder):
     """
 
     # find all the FITS files
-    names = filter(lambda s: s.endswith('.fits'), os.listdir(folder))
+    names = [s for s in os.listdir(folder) if s.endswith('.fits')]
 
     tele = None
     unchanged = []
@@ -395,7 +398,7 @@ def auto_rename(folder):
                 cenwave = hdr['cenwave']
                 band = 'U' if cenwave < 4000.0 else 'V'
 
-                obsnames = filter(lambda s: root in s, names) + [name]
+                obsnames = [s for s in names if root in s] + [name]
                 for oname in obsnames:
                     try:
                         names.remove(oname)
@@ -411,8 +414,8 @@ def auto_rename(folder):
             continue
 
     if len(unchanged) > 0:
-        print 'The following files could not be renamed:'
-        for name in unchanged: print '    ' + name
+        print('The following files could not be renamed:')
+        for name in unchanged: print('    ' + name)
 
 
 def find_coaddfile(specfiles):
@@ -422,7 +425,7 @@ def find_coaddfile(specfiles):
     provided spectbls, otherwise returns none.
     """
     # check for multiple configurations
-    insts = np.array(map(parse_instrument, specfiles))
+    insts = np.array(list(map(parse_instrument, specfiles)))
     if any(insts[:-1] != insts[:-1]):
         return NotImplemented("...can't deal with different data sources.")
 
@@ -451,7 +454,7 @@ def sub_coaddfiles(specfiles):
     groups = group_by_instrument(specfiles)
     result = []
     for group in groups:
-        group = filter(lambda s: 'coadd' not in s, group)
+        group = [s for s in group if 'coadd' not in s]
         coaddfile = find_coaddfile(group)
         if coaddfile is not None:
             result.append(coaddfile)
@@ -481,10 +484,10 @@ def coaddgroups(star, nosingles=False):
     Chooses the best source files and avoids dulicates."""
     allfiles = allsourcefiles(star)
     allfiles = sub_customfiles(allfiles)
-    hstfiles = filter(lambda s: 'hst' in s, allfiles)
-    filterfiles = lambda s: filter(lambda ss: s in ss, hstfiles)
-    files = map(filterfiles, rc.instruments)
-    files = filter(len, files)
+    hstfiles = [s for s in allfiles if 'hst' in s]
+    filterfiles = lambda s: [ss for ss in hstfiles if s in ss]
+    files = list(map(filterfiles, rc.instruments))
+    files = list(filter(len, files))
     if nosingles:
-        files = filter(lambda x: len(x) > 1, files)
+        files = [x for x in files if len(x) > 1]
     return files

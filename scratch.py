@@ -1,5 +1,7 @@
-import rc, io, db, utils, reduce as red
-from plot import specstep as ss
+from __future__ import division, print_function, absolute_import
+
+from . import rc, io, db, utils, reduce as red
+from .plot import specstep as ss
 from astropy import table
 from matplotlib import pyplot as plt
 import os
@@ -52,7 +54,7 @@ def phx_norm_compare():
         fac = p['normfac'][-1]
         chng = abs(fac/ofac - 1)*100.
         name = rc.starprops['name txt'][star]
-        print '{:8s} | {:6.1f}'.format(name, chng)
+        print('{:8s} | {:6.1f}'.format(name, chng))
 
 # ----------------------------------------------------------------------------------------------------------------------
 # plot Lya splice for all stars
@@ -103,7 +105,7 @@ def lya_galex_ratio(star):
     w = (pan['w0'] + pan['w1'])/2.0
     f = pan['flux']
     twf = lambda bp: np.trapz(np.interp(bp[0], w, f)*bp[1], bp[0])
-    NUV, FUV = map(twf, [nuv, fuv])
-    print star
-    print 'Lya/NUV ratio = {:.2g}'.format(lya/NUV)
-    print 'Lya/FUV ratio = {:.2g}'.format(lya/FUV)
+    NUV, FUV = list(map(twf, [nuv, fuv]))
+    print(star)
+    print('Lya/NUV ratio = {:.2g}'.format(lya/NUV))
+    print('Lya/FUV ratio = {:.2g}'.format(lya/FUV))

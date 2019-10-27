@@ -5,6 +5,8 @@ Created on Mon Oct 20 15:42:13 2014
 @author: Parke
 """
 
+from __future__ import division, print_function, absolute_import
+
 import os
 from math import sqrt
 from itertools import combinations_with_replacement as combos
@@ -21,10 +23,11 @@ import scipy.optimize as opt
 
 import mypy.my_numpy as mnp
 from mypy import specutils, pdfutils
-import rc, utils, io, check, db
+from . import rc, utils, io, check, db
 from spectralPhoton.hst import x2dspec
 import spectralPhoton as sp
 import matplotlib.pyplot as plt
+from functools import reduce
 
 colnames = rc.spectbl_format['colnames']
 airglow_ranges = rc.airglow_ranges
@@ -46,21 +49,21 @@ def theworks(star, newphx=False, silent=False):
 
     # interpolate and save phoenix spectrum
     if newphx:
-        if not silent: print '\n\ninterpolating phoenix spectrum'
+        if not silent: print('\n\ninterpolating phoenix spectrum')
         auto_phxspec(star, silent=silent)
     else:
-        if not silent: print '\n\nnot interpolating new phoenix spectrum bc you said not to'
+        if not silent: print('\n\nnot interpolating new phoenix spectrum bc you said not to')
 
     # make custom extractions
-    if not silent: print '\n\nperforming any custom extractions'
+    if not silent: print('\n\nperforming any custom extractions')
     auto_customspec(star, silent=silent)
 
     # coadd spectra
-    if not silent: print '\n\ncoadding spectra'
+    if not silent: print('\n\ncoadding spectra')
     auto_coadd(star, silent=silent)
 
     # make panspectrum
-    if not silent: print '\n\nstitching spectra together'
+    if not silent: print('\n\nstitching spectra together')
     panspectrum(star, silent=silent)  # panspec and Rspec
 
     # write hlsp
@@ -103,13 +106,13 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr=
 
     # carry out custom trims according to user-defined settings
     if not silent:
-        print 'trimming spectra according to settings for {}'.format(star)
+        print('trimming spectra according to settings for {}'.format(star))
     for i in range(len(specs)):
         goodranges = sets.get_custom_range(names[i])
         if goodranges is not None:
             if not silent:
-                print ('trimming spectra in {} to the ranges {}'
-                       ''.format(names[i], goodranges))
+                print(('trimming spectra in {} to the ranges {}'
+                       ''.format(names[i], goodranges)))
             ends = 'loose' if ('cos_g130m' in names[i]) or ('sts_e140m' in names[i]) else 'tight'
             specs[i] = utils.keepranges(specs[i], goodranges, ends=ends)
 
@@ -118,13 +121,13 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr=
         offset = sets.get_wave_offset(names[i])
         if offset is not None:
             if not silent:
-                print ('adjusting wavelengt of {} by {}'.format(names[i], offset))
+                print(('adjusting wavelengt of {} by {}'.format(names[i], offset)))
             specs[i]['w0'] += offset
             specs[i]['w1'] += offset
 
     # remove airglow lines from COS
     if not silent:
-        print '\n\tremoving airglow from G130M spectrum'
+        print('\n\tremoving airglow from G130M spectrum')
     for i in range(len(specs)):
         if 'cos_g130m' in names[i]:
             specs[i] = utils.keepranges(specs[i], safe_ranges)
@@ -136,13 +139,13 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr=
 
     # for easily finding spectra in list
     def index(str):
-        name = filter(lambda s: str in s, names)
+        name = [s for s in names if str in s]
         assert len(name) == 1
         return names.index(name[0])
 
     # normalize PHX to photometry
     if 'mod_phx_-----' not in sets.weird_norm:
-        if not silent: print 'normalizing phoenix to photometry'
+        if not silent: print('normalizing phoenix to photometry')
         iphx = index('phx')
         phxnorm, phxerr = norm2photometry(specs[iphx], silent=silent, plotfit=False, clean=True, err=phxnormerr)
         specs[iphx]['flux'] *= phxnorm
@@ -153,7 +156,7 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr=
 
     # trim PHX models so they aren't used to fill small gaps in UV data
     if not silent:
-        print '\n\ttrimming PHOENIX to 2500+'
+        print('\n\ttrimming PHOENIX to 2500+')
     for i in range(len(specs)):
         if 'mod_phx' in names[i]:
             specs[i] = utils.split_exact(specs[i], 2500., 'red')
@@ -170,15 +173,15 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr=
     # normalize and splice
     spec = specs[0]
     if not silent:
-        print '\nstarting stitched spectrum with {}'.format(spec.meta['NAME'])
+        print('\nstarting stitched spectrum with {}'.format(spec.meta['NAME']))
     for i in range(1, len(specs)):
         addspec = specs[i]
         name = names[i]
 
         if not silent:
             specrange = [addspec['w0'][0], addspec['w1'][-1]]
-            print ''
-            print 'splicing in {}, covering {:.1f}-{:.1f}'.format(name, *specrange)
+            print('')
+            print('splicing in {}, covering {:.1f}-{:.1f}'.format(name, *specrange))
 
         inst = db.parse_instrument(name)
         if not rc.dontnormalize(addspec):
@@ -187,23 +190,23 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr=
                 if type(refinst_or_fac) is str:
                     refinst = refinst_or_fac
                     if not silent:
-                        print 'normalizing {} spec using the same factor as that used for the {} spec'.format(inst, refinst)
-                    refspec = filter(lambda spec: refinst in spec.meta['NAME'], specs)
+                        print('normalizing {} spec using the same factor as that used for the {} spec'.format(inst, refinst))
+                    refspec = [spec for spec in specs if refinst in spec.meta['NAME']]
                     assert len(refspec) == 1
                     refspec = refspec[0]
                     normfac, normerr = refspec[0]['normfac'], np.nan
                 else:
-                    print 'normalizing {} inst by {} as sepcified in sets.werid_norm for this star.'.format(inst, refinst_or_fac)
+                    print('normalizing {} inst by {} as sepcified in sets.werid_norm for this star.'.format(inst, refinst_or_fac))
                     normfac, normerr = refinst_or_fac, np.nan
             else:
                 overlap = utils.overlapping(spec, addspec)
                 if not overlap:
                     normfac, normerr = 1.0, np.nan
                     if not silent:
-                        print '\tno overlap, so won\'t normalize'
+                        print('\tno overlap, so won\'t normalize')
                 if overlap:
                     if not silent:
-                        print '\tnormalizing within the overlap'
+                        print('\tnormalizing within the overlap')
                     normranges = sets.get_norm_range(name)
                     config = db.parse_info(name, 1, 4)
                     if config in rc.normranges:
@@ -229,7 +232,7 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr=
         else:
             if 'phx' not in name and 'g430' not in name:
                 rc.normfacs[star][inst] = 1.0, np.nan
-            if not silent: print '\twon\'t normalize, cuz you said not to'
+            if not silent: print('\twon\'t normalize, cuz you said not to')
 
         spec = smartsplice(spec, addspec)
     spec.meta['NAME'] = db.parse_name(db.panpath(star))
@@ -239,16 +242,16 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr=
 
     # replace lya portion with model or normalized stis data
     if lyaspec is None:
-        name = filter(lambda s: 'sts_g140m' in s or 'sts_e140m' in s, names)
+        name = [s for s in names if 'sts_g140m' in s or 'sts_e140m' in s]
         if len(name) > 1:
             raise Exception('More than one Lya stis file found.')
         ilya = names.index(name[0])
         lyaspec = specs[ilya]
         normfac = lyaspec['normfac'][0]
         if not silent:
-            print ('replacing section {:.1f}-{:.1f} with STIS data from {lf}, '
+            print(('replacing section {:.1f}-{:.1f} with STIS data from {lf}, '
                    'normalized by {normfac}'
-                   ''.format(*lyacut, lf=name, normfac=normfac))
+                   ''.format(*lyacut, lf=name, normfac=normfac)))
         lntz_params = None
     else:
         wlya = (lyaspec['w0'] + lyaspec['w1'])/2.0
@@ -267,16 +270,16 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr=
         for i0, i1 in zip(i0s, i1s):
             lyaspec['flux'][i0:i1] = lntz[i0:i1]
         if not silent:
-            print ('replacing section {:.1f}-{:.1f} with data from {lf}'
-                   ''.format(*lyacut, lf=lyaspec.meta['NAME']))
+            print(('replacing section {:.1f}-{:.1f} with data from {lf}'
+                   ''.format(*lyacut, lf=lyaspec.meta['NAME'])))
     lyaspec = utils.keepranges(lyaspec, lyacut)
     spec = splice(spec, lyaspec)
 
     # fill any remaining gaps
     order, span = rc.gap_fit_order, rc.gap_fit_span
     if not silent:
-        print ('filling in any gaps with an order {} polynomial fit to an '
-               'area {}x the gap width'.format(order, span))
+        print(('filling in any gaps with an order {} polynomial fit to an '
+               'area {}x the gap width'.format(order, span)))
     spec = fill_gaps(spec, fill_with=order, fit_span=span, silent=silent, mingapR=10.0)
 
     spec.meta['LNZ_NORM'], spec.meta['LNZ_GAM'] = lntz_params
@@ -286,14 +289,14 @@ def panspectrum(star, savespecs=True, plotnorms=False, silent=False, phxnormerr=
     # resample at constant dw
     dw = rc.panres
     if not silent:
-        print ('creating resampled panspec at dw = {:.1f} AA'.format(dw))
+        print(('creating resampled panspec at dw = {:.1f} AA'.format(dw)))
     dspec = utils.evenbin(spec, dw)
 
     # save to fits
     if savespecs:
         paths = [db.panpath(star), db.dpanpath(star, dw)]
         if not silent:
-            print 'saving spectra to \n' + '\n\t'.join(paths)
+            print('saving spectra to \n' + '\n\t'.join(paths))
         for s, path in zip([spec, dspec], paths):
             io.writefits(s, path, overwrite=True)
 
@@ -375,8 +378,8 @@ def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False, safe
     # if speca has all zero errors (it's a model), don't normalize to it
     if safe and np.all(spectbla[overa]['error'] == 0.0):
         if not silent:
-            print ('the master spectrum {} has all zero errors, so {} will '
-                   'not be normalized to it'.format(*names))
+            print(('the master spectrum {} has all zero errors, so {} will '
+                   'not be normalized to it'.format(*names)))
             return 1.0, np.nan
         #        return spectblb
 
@@ -393,17 +396,17 @@ def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False, safe
         order = slice(None, None, 1)
     if not silent:
         over_range = [ospeca['w0'][0], ospeca['w1'][-1]]
-        print ('spectra overlap at {:.2f}-{:.2f}'.format(*over_range))
-        print ('rebinning {} to the (coarser) resolution of {} where they '
-               'overlap'.format(*names[order]))
+        print(('spectra overlap at {:.2f}-{:.2f}'.format(*over_range)))
+        print(('rebinning {} to the (coarser) resolution of {} where they '
+               'overlap'.format(*names[order])))
 
     # mask data with flags
     if flagmask:
         flagged = (ospeca['flags'] > 0) | (ospecb['flags'] > 0)
         if not silent:
             percent_flagged = np.sum(flagged) / float(len(ospeca)) * 100.0
-            print ('{:.2f}% of the data that was flagged in one spectra or '
-                   'the other. masking it out.'.format(percent_flagged))
+            print(('{:.2f}% of the data that was flagged in one spectra or '
+                   'the other. masking it out.'.format(percent_flagged)))
     else:
         flagged = np.zeros(len(ospeca), bool)
 
@@ -412,8 +415,8 @@ def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False, safe
         zeroerr = (ospeca['error'] == 0.0)
         if not silent:
             percent_zeroerr = np.sum(zeroerr) / float(len(ospeca)) * 100.0
-            print ('{:.2f}% of the data in the master spectrum had zero error. '
-                   'masking it out'.format(percent_zeroerr))
+            print(('{:.2f}% of the data in the master spectrum had zero error. '
+                   'masking it out'.format(percent_zeroerr)))
     else:
         zeroerr = np.zeros(len(ospeca), bool)
 
@@ -432,22 +435,22 @@ def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False, safe
         error = mnp.quadsum(spec['error'][good] * dw[good])
         return area, error
 
-    areas, errors = zip(*map(getarea, ospecs))
+    areas, errors = list(zip(*list(map(getarea, ospecs))))
     if not silent:
-        print ('master spectrum has overlap area    {:.2e} ({:.2e})\n'
+        print(('master spectrum has overlap area    {:.2e} ({:.2e})\n'
                'secondary spectrum has overlap area {:.2e} ({:.2e})'
-               ''.format(areas[0], errors[0], areas[1], errors[1]))
+               ''.format(areas[0], errors[0], areas[1], errors[1])))
     diff = abs(areas[1] - areas[0])
     differr = mnp.quadsum(errors)
     p = 2.0 * (1.0 - norm.cdf(diff, loc=0.0, scale=differr))
     if not silent:
-        print ('difference =                        {:.2e} ({:.2e})'
-               ''.format(diff, differr))
-        print 'probability that the difference is spurious = {:.4f}'.format(p)
+        print(('difference =                        {:.2e} ({:.2e})'
+               ''.format(diff, differr)))
+        print('probability that the difference is spurious = {:.4f}'.format(p))
     if worry and p > worry:
         if not silent:
-            print ('{} > {}, so secondary will not be normalized to master'
-                   ''.format(p, worry))
+            print(('{} > {}, so secondary will not be normalized to master'
+                   ''.format(p, worry)))
         return 1.0, np.nan
 
     # area ratio
@@ -456,8 +459,8 @@ def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False, safe
     normfacerr = sqrt((errors[0] / areas[1]) ** 2 + (areas[0] * errors[1] / areas[1] ** 2) ** 2)
 
     if not silent:
-        print ('secondary will be normalized by a factor of {} ({})'
-               ''.format(normfac, normfacerr))
+        print(('secondary will be normalized by a factor of {} ({})'
+               ''.format(normfac, normfacerr)))
 
     return normfac, normfacerr
 
@@ -465,7 +468,7 @@ def normalize(spectbla, spectblb, worry=0.05, flagmask=False, silent=False, safe
 def norm2photometry(spec, photom_tbl=None, band_dict=None, silent=False, plotfit=False, return_ln_like=False,
                     return_tbl_and_err=False, clean=False, err='constSN'):
 
-    if not silent: print "Normalizing {} to photometry.".format(spec.meta['NAME'])
+    if not silent: print("Normalizing {} to photometry.".format(spec.meta['NAME']))
     if photom_tbl is None:
         star = spec.meta["STAR"]
         photometry = io.get_photometry(star, spec['w0'][0], spec['w1'][-1], silent=silent)
@@ -483,7 +486,7 @@ def norm2photometry(spec, photom_tbl=None, band_dict=None, silent=False, plotfit
 
     # compute synthetic phot in all bands used in table
     synphot_dict = {}
-    for key, band in band_dict.items():
+    for key, band in list(band_dict.items()):
         wb, rb = band.T
         vb = (const.c/(wb*u.AA)).to(u.Hz).value
         rbi = np.interp(v[::-1], vb[::-1], rb[::-1])[::-1]
@@ -536,7 +539,7 @@ def norm2photometry(spec, photom_tbl=None, band_dict=None, silent=False, plotfit
     normfac_err = 1.0/np.sqrt(np.sum((synphot/std)**2))
     synphot, synphot_err = synphot*normfac, synphot*normfac_err
     if not silent:
-        print "spectrum normalized by {:.2e} with a {:.1f}% uncertainty".format(normfac, 100*normfac_err/normfac)
+        print("spectrum normalized by {:.2e} with a {:.1f}% uncertainty".format(normfac, 100*normfac_err/normfac))
 
     if plotfit not in [None, False]:
         if type(plotfit) is not bool:
@@ -628,9 +631,9 @@ def smartsplice(speca, specb, minsplice=0.005):
     def split_data_model(spec):
         data = spec['error'] > 0
         return utils.gapsplit(spec[data]), utils.gapsplit(spec[~data])
-    (specsa_data, specsa_model), (specsb_data, specsb_model) = map(split_data_model, [speca, specb])
+    (specsa_data, specsa_model), (specsb_data, specsb_model) = list(map(split_data_model, [speca, specb]))
 
-    remove_empties = lambda lst: filter(lambda spec: len(spec) > 0, lst)
+    remove_empties = lambda lst: [spec for spec in lst if len(spec) > 0]
 
     # first, splice data to data according to order. once a spectrum has been spliced in, it can be discarded.
     specs_data = specsa_data + specsb_data
@@ -697,7 +700,7 @@ def optimal_splice(speca, specb, minsplice):
     dw = np.diff(we)
 
     # get flux and variance and mask values with dq flags and nan values
-    masks = map(utils.seriousflags, oboth)
+    masks = list(map(utils.seriousflags, oboth))
     flus = [spec['flux'] * dw for spec in oboth]
     sig2s = [(spec['error'] * dw) ** 2 for spec in oboth]
 
@@ -706,12 +709,12 @@ def optimal_splice(speca, specb, minsplice):
         x[np.isnan(x)] = 0.0
         return x
 
-    flus = map(maskitfillit, flus, masks)
-    sig2s = map(maskitfillit, sig2s, masks)
+    flus = list(map(maskitfillit, flus, masks))
+    sig2s = list(map(maskitfillit, sig2s, masks))
 
     sumstuff = lambda x: np.insert(np.cumsum(x), 0, 0.0)
-    cf0, cf1 = map(sumstuff, flus)
-    cv0, cv1 = map(sumstuff, sig2s)
+    cf0, cf1 = list(map(sumstuff, flus))
+    cv0, cv1 = list(map(sumstuff, sig2s))
     # this way, any portions where all variances are zero will result in a
     # total on nan for the signal to noise
 
@@ -727,7 +730,7 @@ def optimal_splice(speca, specb, minsplice):
         i, j = np.array([ij for ij in ijs]).T
         keep = (we[j] - we[i]) > mindw
         i, j = i[keep], j[keep]
-        i, j = map(np.append, [i, j], [0, 0])
+        i, j = list(map(np.append, [i, j], [0, 0]))
 
         #        signal = cf0[i] + (cf1[j] - cf1[i]) + (cf0[-1] - cf0[j])
         var = cv0[i] + (cv1[j] - cv1[i]) + (cv0[-1] - cv0[j])
@@ -746,7 +749,7 @@ def optimal_splice(speca, specb, minsplice):
 
     # do the same, if not enclosed
     else:
-        i = range(len(we))
+        i = list(range(len(we)))
         #        signal = cf0[i] + (cf1[-1] - cf1[i])
         var = cv0[i] + (cv1[-1] - cv1[i])
         #        SN = signal/np.sqrt(var)
@@ -800,7 +803,7 @@ def splice(spectbla, spectblb, reckless=False):
         else:
             return meta['NAME']
 
-    sources = np.hstack(map(parsesources, metas))
+    sources = np.hstack(list(map(parsesources, metas)))
     spec.meta['SOURCESPECS'] = np.unique(sources)
     spec.meta['FILENAME'] = ''
     spec.meta['NAME'] = 'stitched spectrum'
@@ -825,13 +828,13 @@ def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime', exptime
         return coadd(newlist, maskbaddata=False, savefits=savefits, weights=weights, exptime=exptime, silent=silent)
 
     # split spectra at gaps to avoid removing the gaps
-    temp = map(utils.gapsplit, spectbls)
+    temp = list(map(utils.gapsplit, spectbls))
     spectbls = sum(temp, [])
 
     sourcefiles = [s.meta['FILENAME'] for s in spectbls]
 
     listify = lambda s: [spec[s].data.copy() for spec in spectbls]
-    w0, w1, f, e, expt, dq, inst, normfac, start, end = map(listify, colnames)
+    w0, w1, f, e, expt, dq, inst, normfac, start, end = list(map(listify, colnames))
     we = [np.append(ww0, ww1[-1]) for ww0, ww1 in zip(w0, w1)]
 
     if any([np.any(n != 1.0) for n in normfac]):
@@ -848,7 +851,7 @@ def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime', exptime
     def specialcoadder(a, f, bv):
         return specutils.stack_special(we, a, f, commongrid=cwe, baseval=bv)
 
-    cinst, cstart, cend = map(specialcoadder, data, funcs, basevals)
+    cinst, cstart, cend = list(map(specialcoadder, data, funcs, basevals))
     cnorm = np.ones(len(cwe) - 1)
     cw0, cw1 = cwe[:-1], cwe[1:]
     if exptime == 'pass':
@@ -873,7 +876,7 @@ def coadd(spectbls, maskbaddata=True, savefits=False, weights='exptime', exptime
         if type(savefits) is str: cfile = savefits
         io.writefits(spectbl, cfile, overwrite=True)
         spectbl.meta['FILENAME'] = cfile
-        if not silent: print 'coadd saved to \n\t{}'.format(cfile)
+        if not silent: print('coadd saved to \n\t{}'.format(cfile))
     return spectbl
 
 
@@ -894,11 +897,11 @@ def auto_coadd(star, configs=None, silent=False):
     for group in groups:
         if not silent:
             names = [os.path.basename(f) for f in group]
-            print 'coadding the spectra \n\t{}'.format('\n\t'.join(names))
-        echelles = map(utils.isechelle, group)
+            print('coadding the spectra \n\t{}'.format('\n\t'.join(names)))
+        echelles = list(map(utils.isechelle, group))
         if any(echelles):
             if not silent:
-                print 'some files are echelles, so weighting orders by 1/error**2 and then spectra by exptime'
+                print('some files are echelles, so weighting orders by 1/error**2 and then spectra by exptime')
             spectbls = []
             for f in group:
                 orders = io.read(f)
@@ -912,15 +915,15 @@ def auto_coadd(star, configs=None, silent=False):
             if any(echelles):
                 path = db.coaddpath(group[0])
                 if not silent:
-                    print 'single echelle spectrum, saving to {}'.format(path)
+                    print('single echelle spectrum, saving to {}'.format(path))
                 io.writefits(spectbls[0], path, overwrite=True)
             else:
                 if not silent:
-                    print 'single spectrum for {}, moving on'.format(spectbls[0].meta['NAME'])
+                    print('single spectrum for {}, moving on'.format(spectbls[0].meta['NAME']))
             continue
         else:
             if not silent:
-                print 'weighting by exposure time and coadding'
+                print('weighting by exposure time and coadding')
             coadd(spectbls, savefits=True, weights='exptime', exptime='sum', silent=silent)
 
 
@@ -930,7 +933,7 @@ def phxspec(Teff, logg=4.5, FeH=0.0, aM=0.0, repo=rc.phxrepo):
     values for temperature, surface gravity, metallicity, and alpha metal
     content.
     """
-    Teff, logg, FeH, aM = map(float, [Teff, logg, FeH, aM])
+    Teff, logg, FeH, aM = list(map(float, [Teff, logg, FeH, aM]))
     grids = [rc.phxTgrid, rc.phxggrid, rc.phxZgrid, rc.phxagrid]
     pt = [Teff, logg, FeH, aM]
 
@@ -978,7 +981,7 @@ def auto_phxspec(star, Teff='oldfit', silent=False, err='constSN', fitspec=None,
                                                                                              'xtol': 10.})
         Teff = result.x
         spec = phxspec(Teff, **kwds)
-        if not silent: print "Best fit Teff of {:.0f} found. Finding confidence interval.".format(Teff)
+        if not silent: print("Best fit Teff of {:.0f} found. Finding confidence interval.".format(Teff))
 
         # cull outliers for optimal solution, then find error bars using error bars and points from optimal solution
         tbl, uncts = norm2photometry(spec, photom_tbl=tbl, band_dict=band_dict, silent=True, plotfit=False,
@@ -998,15 +1001,15 @@ def auto_phxspec(star, Teff='oldfit', silent=False, err='constSN', fitspec=None,
         dT = Tlim - Teff
         Tlo = max(2300, Teff - dT)
         Tgrid = np.linspace(Tlo, Teff+dT, N)
-        Lgrid = np.exp(map(ln_like, Tgrid))
+        Lgrid = np.exp(list(map(ln_like, Tgrid)))
         Igrid = np.cumsum(np.diff(Tgrid)*mnp.midpts(Lgrid))
         Imid = Igrid[N/2]
         I = Igrid[-1]
         dI = I*0.683/2
         I0, I1 = Imid - dI, Imid + dI
         T0, T1 = np.interp([I0, I1], Igrid, mnp.midpts(Tgrid))
-        if not silent: print ("Best-fit phoenix spectrum found with Teff = {:.0f} ({:.0f}-{:.0f}) comapred to "
-                              "literature value of {:.0f}. Saving.".format(Teff, T0, T1, Tlit))
+        if not silent: print(("Best-fit phoenix spectrum found with Teff = {:.0f} ({:.0f}-{:.0f}) comapred to "
+                              "literature value of {:.0f}. Saving.".format(Teff, T0, T1, Tlit)))
     if Teff == 'fit' and fitspec is not None:
 
         bins = utils.wbins(fitspec)
@@ -1025,12 +1028,12 @@ def auto_phxspec(star, Teff='oldfit', silent=False, err='constSN', fitspec=None,
             terms = -(spec['flux'] - fitspec['flux'])**2/2/fitspec['error']**2
             return np.sum(-np.log(np.sqrt(2*np.pi)*fitspec['error']) + terms)
 
-        if not silent: print "Finding Teff that best fits the provided spectrum."
+        if not silent: print("Finding Teff that best fits the provided spectrum.")
         result = opt.minimize_scalar(lambda Teff: -ln_like(Teff), bracket=[Tlit-Tlit_err, Tlit+Tlit_err],
                                      bounds=[Tlit-500, Tlit+500], method='bounded', options={'disp': (not silent),
                                                                                              'xtol': 10.})
         Teff = result.x
-        if not silent: print "Best fit Teff of {:.0f} found. Finding confidence interval.".format(Teff)
+        if not silent: print("Best fit Teff of {:.0f} found. Finding confidence interval.".format(Teff))
         N = 201
         for dT in range(100,2001,100):
             try:
@@ -1042,15 +1045,15 @@ def auto_phxspec(star, Teff='oldfit', silent=False, err='constSN', fitspec=None,
         dT = Tlim - Teff
         Tlo = max(2300, Teff - dT)
         Tgrid = np.linspace(Tlo, Teff+dT, N)
-        Lgrid = np.exp(map(ln_like, Tgrid))
+        Lgrid = np.exp(list(map(ln_like, Tgrid)))
         Igrid = np.cumsum(np.diff(Tgrid)*mnp.midpts(Lgrid))
         Imid = Igrid[N/2]
         I = Igrid[-1]
         dI = I*0.683/2
         I0, I1 = Imid - dI, Imid + dI
         T0, T1 = np.interp([I0, I1], Igrid, mnp.midpts(Tgrid))
-        if not silent: print ("Best-fit phoenix spectrum found with Teff = {:.0f} ({:.0f}-{:.0f}) comapred to "
-                              "literature value of {:.0f}. Saving.".format(Teff, T0, T1, Tlit))
+        if not silent: print(("Best-fit phoenix spectrum found with Teff = {:.0f} ({:.0f}-{:.0f}) comapred to "
+                              "literature value of {:.0f}. Saving.".format(Teff, T0, T1, Tlit)))
 
     if Teff == 'lit':
         Teff = Tlit
@@ -1061,8 +1064,8 @@ def auto_phxspec(star, Teff='oldfit', silent=False, err='constSN', fitspec=None,
         T0 = Teff - rc.starprops.errneg['Teff_muscles'][star]
         T1 = Teff + rc.starprops.errpos['Teff_muscles'][star]
     if not silent:
-        print 'interpolating phoenix spectrum for {} with values'.format(star)
-        print "Teff = {}".format(Teff), kwds
+        print('interpolating phoenix spectrum for {} with values'.format(star))
+        print("Teff = {}".format(Teff), kwds)
     spec = phxspec(Teff, **kwds)
     spec.meta['STAR'] = star
     spec.meta['Teff'] = Teff
@@ -1072,7 +1075,7 @@ def auto_phxspec(star, Teff='oldfit', silent=False, err='constSN', fitspec=None,
     spec.meta['NAME'] = db.parse_name(path)
     if save:
         if not silent:
-            print 'writing spectrum to {}'.format(path)
+            print('writing spectrum to {}'.format(path))
         io.writefits(spec, path, overwrite=True)
 
     return spec
@@ -1086,14 +1089,14 @@ def auto_customspec(star, silent=False):
     for custom in ss.custom_extractions:
         config = custom['config']
         if not silent:
-            print 'custom extracting spectrum for {}'.format(config)
-            print 'with parameters'
-            print custom['kwds']
+            print('custom extracting spectrum for {}'.format(config))
+            print('with parameters')
+            print(custom['kwds'])
         if 'hst' in config:
             x2dfiles = db.findfiles('u', star, config, 'x2d', fullpaths=True)
             for x2dfile in x2dfiles:
                 if not silent:
-                    print 'using x2dfile {}'.format(x2dfile)
+                    print('using x2dfile {}'.format(x2dfile))
                 x1dfile = x2dfile.replace('x2d', 'x1d')
                 if not os.path.exists(x1dfile): x1dfile = None
                 specfile = x2dfile.replace('x2d', 'custom_spec')
@@ -1118,7 +1121,7 @@ def auto_customspec(star, silent=False):
                     spectbl.meta[key] = meta[key]
 
                 if not silent:
-                    print 'saving custom extraction to {}'.format(specfile)
+                    print('saving custom extraction to {}'.format(specfile))
                 io.writefits(spectbl, specfile, overwrite=True)
         else:
             raise NotImplementedError("No custom extractions defined for {}"
@@ -1130,17 +1133,17 @@ def auto_photons(star, inst='all', fluxed='tag_vs_x1d'):
     # sets = rc.loadsettings(star)
 
     if inst == 'all':
-        instruments = map(db.parse_instrument, alltagfiles)
+        instruments = list(map(db.parse_instrument, alltagfiles))
         instruments = list(set(instruments))
-        inst = filter(lambda s: 'cos' in s, instruments)
+        inst = [s for s in instruments if 'cos' in s]
 
     if type(inst) == list:
         [auto_photons(star, i) for i in instruments]
 
-    getInstFiles = lambda files: filter(lambda s: inst in s, files)
+    getInstFiles = lambda files: [s for s in files if inst in s]
     tagfiles = getInstFiles(alltagfiles)
     if len(tagfiles) == 0:
-        print 'No tag files found for the {} instrument.'.format(inst)
+        print('No tag files found for the {} instrument.'.format(inst))
         return
     x1dfiles = [db.findsimilar(tf, 'x1d')[0] for tf in tagfiles]
 
@@ -1153,8 +1156,8 @@ def auto_photons(star, inst='all', fluxed='tag_vs_x1d'):
 
     photons_list = [sp.hst.readtag(tf, xf, fluxed=fluxed) for tf, xf in zip(tagfiles, x1dfiles)]
     if any(['corrtag_b' in tf for tf in tagfiles]):
-        photons_a = filter(lambda p: p.obs_metadata[0]['segment'] == 'FUVA', photons_list)
-        photons_b = filter(lambda p: p.obs_metadata[0]['segment'] == 'FUVB', photons_list)
+        photons_a = [p for p in photons_list if p.obs_metadata[0]['segment'] == 'FUVA']
+        photons_b = [p for p in photons_list if p.obs_metadata[0]['segment'] == 'FUVB']
         photons_a, photons_b = [sum(ps[1:], ps[0]) for ps in [photons_a, photons_b]]
         pfa, pfb = [db.photonpath(star, inst, s) for s in ['a', 'b']]
         [p.writeFITS(pf, overwrite=True) for p,pf in [[photons_a, pfa], [photons_b, pfb]]]
@@ -1195,8 +1198,8 @@ def remove_line(spec, wavelength, fill_with=None, minclip=None, silent=False):
     def fallback_range():
         radius = w / minclip / 2.0
         if not silent:
-            print ('using minclip range of +- {} AA (R = {})'
-                   ''.format(radius, minclip))
+            print(('using minclip range of +- {} AA (R = {})'
+                   ''.format(radius, minclip)))
         return [w - radius, w + radius]
 
     # clip spectrum down to just a window around the line for fast processing
@@ -1228,25 +1231,25 @@ def remove_line(spec, wavelength, fill_with=None, minclip=None, silent=False):
         # if an emission feature does include it, get its range
         if np.any(inrange):
             if not silent:
-                print 'successfully located line at {} AA'.format(w)
+                print('successfully located line at {} AA'.format(w))
             bad_range = np.squeeze(line_ranges[inrange, :])
         else:
             if not silent:
-                print ('none of the identified lines covered the provided '
-                       'wavelength of {:.2f} AA'.format(w))
+                print(('none of the identified lines covered the provided '
+                       'wavelength of {:.2f} AA'.format(w)))
             if minclip is None:
                 if not silent:
-                    print 'returning unchanged spectrum'
+                    print('returning unchanged spectrum')
                 return spec
             else:
                 bad_range = fallback_range()
     except ValueError:
         if not silent:
-            print ('could not separate line from continuum emission within '
-                   '{:.2f}-{:.2f}'.format(*window))
+            print(('could not separate line from continuum emission within '
+                   '{:.2f}-{:.2f}'.format(*window)))
         if minclip is None:
             if not silent:
-                print 'returning unchanged spectrum'
+                print('returning unchanged spectrum')
             return spec
         else:
             bad_range = fallback_range()
@@ -1255,14 +1258,14 @@ def remove_line(spec, wavelength, fill_with=None, minclip=None, silent=False):
     gap = utils.argrange(spec, bad_range)
     comment = 'clipped out data from {:.2f}-{:.2f} AA'.format(*bad_range)
     if not silent:
-        print comment
+        print(comment)
     spec.meta['COMMENT'].append(comment)
 
     # fill the gap, if desired
     if fill_with is None:
         spec = spec[~gap]
         if not silent:
-            print 'leaving a gap where data was clipped out'
+            print('leaving a gap where data was clipped out')
     else:
         # get the bins to be filled
         gapbins = utils.wbins(spec[gap])
@@ -1308,7 +1311,7 @@ def fill_gaps(spec, fill_with=4, fit_span=10.0, fit_pts=None, resolution=None,
     findgaps = (gapbins is None)
     if findgaps and not utils.hasgaps(spec):
         if not silent:
-            print 'No gaps in spectrum.'
+            print('No gaps in spectrum.')
         return spec
 
     wbins = utils.wbins(spec)
@@ -1334,8 +1337,8 @@ def fill_gaps(spec, fill_with=4, fit_span=10.0, fit_pts=None, resolution=None,
         gapR = midpt / width
         if gapR < mingapR:
             if not silent:
-                print ('gap from {:.2f}-{:.2f} has R = {:.1f} < {:.1f} = '
-                       'mingap, skipping'.format(gr[0], gr[1], gapR, mingapR))
+                print(('gap from {:.2f}-{:.2f} has R = {:.1f} < {:.1f} = '
+                       'mingap, skipping'.format(gr[0], gr[1], gapR, mingapR)))
             gapspecs.append(spec[0:0])
             continue
         if fit_pts is None:
@@ -1349,8 +1352,8 @@ def fill_gaps(spec, fill_with=4, fit_span=10.0, fit_pts=None, resolution=None,
                 span[i - 50:i + 50] = True
 
             if not silent:
-                print 'fitting polynomial to range {:.2f}-{:.2f}'.format(*wspan)
-                print 'attempting to mask out spectral lines'
+                print('fitting polynomial to range {:.2f}-{:.2f}'.format(*wspan))
+                print('attempting to mask out spectral lines')
 
             # also exclude zero-error (model) points
             span[spec['error'] <= 0.0] = False
@@ -1370,11 +1373,11 @@ def fill_gaps(spec, fill_with=4, fit_span=10.0, fit_pts=None, resolution=None,
                 wb, f, e = [a[span][cont] for a in [wbins, flux, error]]
                 if not silent:
                     pctmasked = 100.0 - 100.0 * np.sum(cont) / np.sum(span)
-                    print ('succesfully masked lines including {:.1f}% of the '
-                           'data'.format(pctmasked))
+                    print(('succesfully masked lines including {:.1f}% of the '
+                           'data'.format(pctmasked)))
             except ValueError:
                 if not silent:
-                    print 'couldn\'t separate out continuum points'
+                    print('couldn\'t separate out continuum points')
                 wb, f, e = [a[span] for a in [wbins, flux, error]]
 
             # fit polynomial to data
@@ -1394,8 +1397,8 @@ def fill_gaps(spec, fill_with=4, fit_span=10.0, fit_pts=None, resolution=None,
             gapbins = utils.edges2bins(gridedges)
 
         if not silent:
-            print ('gap from {:.2f}-{:.2f} filled with order {} polynomial'
-                   ''.format(gr[0], gr[1], n))
+            print(('gap from {:.2f}-{:.2f} filled with order {} polynomial'
+                   ''.format(gr[0], gr[1], n)))
 
         # compute value of polynomial on the grid
         gapflux = poly(gapbins)[0]
@@ -1443,7 +1446,7 @@ def findflares(curveList, flagfactor=1.0, silent=True):
     ns = [len(curve[0]) for curve in curveList]
     expends = list(np.cumsum(ns))
     expstarts = [0] + expends[:-1]
-    t0s, t1s, rates, errs = map(np.hstack, zip(*curveList))
+    t0s, t1s, rates, errs = list(map(np.hstack, list(zip(*curveList))))
     ts = (t0s + t1s) / 2.0
     clean = np.ones(len(rates), bool)
     count = 0
@@ -1470,7 +1473,7 @@ def findflares(curveList, flagfactor=1.0, silent=True):
             areas = normrate * dt
             areaList.append(mnp.splitsum(areas, runslices))
 
-        runslices, areas, begs, ends = map(np.hstack, [runSliceList, areaList, begList, endList])
+        runslices, areas, begs, ends = list(map(np.hstack, [runSliceList, areaList, begList, endList]))
         runslices = np.insert(runslices, 0, 0)
 
         flare = areas > -(flagfactor * areas.min())
@@ -1560,12 +1563,12 @@ def auto_flares(star, bands, inst, label, dt=1.0, silent=False):
     expt = ph[0].header['EXPTIME']
 
     curves = []
-    groups = [range(len(bands))]
+    groups = [list(range(len(bands)))]
     for i in range(nexp):
         ii = (photons['expno'] == i)
         curve = sp.spectral_curves(photons['time'][ii], photons['wavelength'][ii], eps=photons['epsilon'][ii],
                                    tbins=dt, bands=bands, groups=groups)
-        tedges, cps, err = zip(*curve)[0]
+        tedges, cps, err = list(zip(*curve))[0]
         t0, t1 = tedges[:-1], tedges[1:]
         curves.append([t0, t1, cps, err])
 
@@ -1644,7 +1647,7 @@ def match_flares(star, inst, bandlabels='all', masterband='broad130a', flarecut=
             duration = flare['stop'] - flare['start']
             overlapping, _ = utils.argoverlap(bandRanges, masterRange, 'loose')
             slimCat = bandCat[overlapping & bandCat['flare']]
-            overranges = zip(slimCat['start'], slimCat['stop'])
+            overranges = list(zip(slimCat['start'], slimCat['stop']))
             overranges = mnp.range_intersect(overranges, [masterRange])
             overlap = overranges[:,1] - overranges[:,0]
             if np.any(overlap/duration) > 0.0:
@@ -1659,7 +1662,7 @@ def combine_flarecats(bandname, inst, flarecut=1.0, stars='all'):
     fs = db.findfiles(rc.flaredir, inst, bandname, 'flares', fullpaths=True)
     if stars != 'all':
         hasStar = lambda f: any([s in f for s in stars])
-        fs = filter(hasStar, fs)
+        fs = list(filter(hasStar, fs))
 
     tbls, dts, bands = [], [], []
     expt = 0.0
@@ -1692,11 +1695,11 @@ def combine_flarecats(bandname, inst, flarecut=1.0, stars='all'):
 
         # record dt and bands to check that all are the same later
         dts.append(flareTable.meta['DT'])
-        keys = flareTable.meta.keys()
-        nbands = sum(map(lambda s: 'BANDBEG' in s, keys))
+        keys = list(flareTable.meta.keys())
+        nbands = sum(['BANDBEG' in s for s in keys])
         band0 = [flareTable.meta['BANDBEG' + str(i)] for i in range(nbands)]
         band1 = [flareTable.meta['BANDEND' + str(i)] for i in range(nbands)]
-        bands.append(np.array(zip(band0, band1)))
+        bands.append(np.array(list(zip(band0, band1))))
 
         # metadata will just cause merge conflicts
         for key in flareTable.meta:
@@ -1783,7 +1786,7 @@ def __make_masks(welist, dqlist, dqmasks):
     # rebin dq flags onto master grid, make masks, coadd those
     mwe_ins = [mnp.inranges(mwe, we[[0, -1]]) for we in welist]
     mwelist = [mwe[mwe_in] for mwe_in in mwe_ins]
-    rdqs = map(mnp.rebin, mwelist, welist, dqlist, ['or'] * len(welist))
+    rdqs = list(map(mnp.rebin, mwelist, welist, dqlist, ['or'] * len(welist)))
     masks = [(rdq & dqmask) > 0 for rdq, dqmask in zip(rdqs, dqmasks)]
 
     mmask = np.ones(len(mwe) - 1, bool)

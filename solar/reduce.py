@@ -1,3 +1,5 @@
+from __future__ import division, print_function, absolute_import
+
 import netCDF4 as nc
 from .. import rc
 from os import path
@@ -91,15 +93,15 @@ def SEEFlareRatios(proximityCut=0.1):
                 ratioerrs.append(np.nan)
         ratioList.append(ratios)
         ratioerrList.append(ratioerrs)
-    ratioList = map(np.array, ratioList)
-    ratioerrList = map(np.array, ratioerrList)
-    return dict(zip(names, ratioList)), dict(zip(names, ratioerrList))
+    ratioList = list(map(np.array, ratioList))
+    ratioerrList = list(map(np.array, ratioerrList))
+    return dict(list(zip(names, ratioList))), dict(list(zip(names, ratioerrList)))
 
 
 def EVEFlareCat2FITS(savdata=None):
 
     if savdata is None:
-        print 'Reading in the data. Note that this takes a minute or two.'
+        print('Reading in the data. Note that this takes a minute or two.')
         savdata = readsav('/Users/parke/Google Drive/Datasets/shared/solar/sdo_eve_sun_flare_catalog.sav')
 
     EVEcat = savdata['flare_catalog']['EVL']

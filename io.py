@@ -5,12 +5,14 @@ Created on Mon Nov 10 14:28:07 2014
 @author: Parke
 """
 
+from __future__ import division, print_function, absolute_import
+
 from os import path
 from astropy.io import fits
 import numpy as np
 from mypy.my_numpy import mids2edges, block_edges, midpts
 from scipy.io import readsav as spreadsav
-import rc, utils, db
+from . import rc, utils, db
 import astropy.table as table
 from astropy.time import Time
 import astropy.units as u
@@ -46,7 +48,7 @@ def readFlareTbl(star, inst, label):
         w0.append(tbl.meta['BANDBEG' + istr])
         w1.append(tbl.meta['BANDEND' + istr])
         i += 1
-    bands = np.array(zip(w0, w1))
+    bands = np.array(list(zip(w0, w1)))
 
     return table.Table.read(tblfile[0]), bands
 
@@ -56,7 +58,7 @@ def readpans(star):
     Read in all panspectra for a star and return as a list.
     """
     panfiles = db.allpans(star)
-    return sum(map(read, panfiles), [])
+    return sum(list(map(read, panfiles)), [])
 
 
 def readpan(star):
@@ -110,7 +112,7 @@ def read(specfiles):
     """
     #if a list of files is provided, reach each and stack the spectra in a list
     if hasattr(specfiles, '__iter__'):
-        return sum(map(read, specfiles), [])
+        return sum(list(map(read, specfiles)), [])
 
     specfiles = db.validpath(specfiles)
 
@@ -250,7 +252,7 @@ def readfits(specfile, observatory=None, spectrograph=None):
         elif sh['instrume'] == 'ACIS':
             starts, ends, expts = [_parse_keys_sequential(sh, root) for root in ['DATE_OBS', 'DATE_END', 'EXPTIME']]
             expt = sum(expts) * 1000.0
-            starts, ends = map(Time, [starts, ends])
+            starts, ends = list(map(Time, [starts, ends]))
             start = min(starts.mjd)
             end = max(ends.mjd)
         else:
@@ -392,7 +394,7 @@ def get_photometry(star, lo=0.0, hi=np.inf, silent=False):
     usable_bands = tbl_bands & known_bands
     if not silent:
         unusable_bands = tbl_bands - known_bands
-        print "Unidentified bands: {}".format(unusable_bands)
+        print("Unidentified bands: {}".format(unusable_bands))
 
     # load all known bands in table
     bands = {}
@@ -403,12 +405,12 @@ def get_photometry(star, lo=0.0, hi=np.inf, silent=False):
 
     # trim out of range photometry
     checkrange = lambda band: (band[0,0] > lo) and (band[-1,0] < hi)
-    for id, band in bands.items():
+    for id, band in list(bands.items()):
         if not checkrange(band):
             del bands[id]
-    inrange = np.array([s in bands.keys() for s in tbl['sed_filter']], bool)
+    inrange = np.array([s in list(bands.keys()) for s in tbl['sed_filter']], bool)
     if np.sum(inrange) == 0:
-        print 'No photometry covers range of {} to {} AA.'.format(lo, hi)
+        print('No photometry covers range of {} to {} AA.'.format(lo, hi))
         return None
     tbl = tbl[inrange]
 
@@ -589,9 +591,9 @@ def writehlsp(star_or_spectbl, components=True, overwrite=False):
     if type(star_or_spectbl) is str:
         star = star_or_spectbl
         pfs = db.allpans(star)
-        pan = read(filter(lambda s: 'native_resolution' in s, pfs))[0]
+        pan = read([s for s in pfs if 'native_resolution' in s])[0]
         writehlsp(pan, components=components, overwrite=overwrite)
-        dpan = read(filter(lambda s: 'dR=' in s, pfs))[0]
+        dpan = read([s for s in pfs if 'dR=' in s])[0]
         writehlsp(dpan, components=False)
         return
     else:
@@ -804,7 +806,7 @@ def writehlsp(star_or_spectbl, components=True, overwrite=False):
         vals = rc.instvals
         instnames = rc.instruments
         pieces = [s.split('_') for s in instnames]
-        tels, insts, gratings = zip(*pieces)
+        tels, insts, gratings = list(zip(*pieces))
         tels = [rc.HLSPtelescopes[t] for t in tels]
         insts = [rc.HLSPinstruments[inst] for inst in insts]
         gratings = [rc.HLSPgratings[g] for g in gratings]
@@ -813,7 +815,7 @@ def writehlsp(star_or_spectbl, components=True, overwrite=False):
 
         names = ['BITVALUE', 'TELESCOPE', 'INSTRUMENT', 'GRATING', 'HLSP_FILE']
         datas = [vals, tels, insts, gratings, hlspnames]
-        lens = [max(map(len, d)) for d in datas[1:]]
+        lens = [max(list(map(len, d))) for d in datas[1:]]
         fmts = ['J'] + [str(n) + 'A' for n in lens]
         fitscols = [fits.Column(n, fmt, array=a) for n, fmt, a in zip(names, fmts, datas)]
 
@@ -826,7 +828,7 @@ def writehlsp(star_or_spectbl, components=True, overwrite=False):
             specs, lyaspec = read_panspec_sources(star)
             if lyaspec is not None: specs.append(lyaspec)
             for inst in instnames:
-                spec = filter(lambda s: inst in s.meta['NAME'], specs)
+                spec = [s for s in specs if inst in s.meta['NAME']]
                 if len(spec) == 0:
                     continue
                 assert len(spec) == 1

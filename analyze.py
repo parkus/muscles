@@ -1,9 +1,11 @@
+from __future__ import division, print_function, absolute_import
+
 from astropy.table import Table
 
-import io
-import db
-import rc
-import utils
+from . import io
+from . import db
+from . import rc
+from . import utils
 import mypy.specutils as su
 import mypy.my_numpy as mnp
 import numpy as np
@@ -117,7 +119,7 @@ def dissoc_ratio(spec, species, band1, band2, dissoc_only=True):
     cspec = cum_dissoc_spec(spec, species, dissoc_only=dissoc_only)
     we = utils.wedges(spec)
     integral = lambda band: np.diff(np.interp(band, we, cspec))
-    I1, I2 = map(integral, [band1, band2])
+    I1, I2 = list(map(integral, [band1, band2]))
     return I1/I2
 
 
@@ -135,4 +137,4 @@ def fluxall(band=rc.fuv):
         spec = io.readpan(star)
         I = utils.flux_integral(spec, *band)
         Is.append(I)
-    return zip(*Is)
+    return list(zip(*Is))
