@@ -35,7 +35,7 @@ proppath = root + '/share/starprops'
 moviepath = productspath + '/movies'
 filterpath =  gdrive + '/Datasets' + '/shared/filter response curves'
 sharepath = root +'/share'
-xsectionpath = local + '/xsections'
+xsectionpath = gdrive + '/Datasets/shared/xsections'
 normfac_file = local + '/normfac_log.json'
 photref_file = photometrypath + '/photometry_refs.json'
 

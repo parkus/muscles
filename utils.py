@@ -569,6 +569,11 @@ def rebin(spec, newbins):
 
     newspec =  vecs2spectbl(w0, w1, flux, error, expt, flags, insts, normfac, start, end)
     newspec.meta = spec.meta
+    if 'flux_photon' in spec.colnames:
+        pflux, perror, _ = specutils.rebin(newedges, oldedges, spec['flux_photon'],
+                                           spec['flux_photon_err'], spec['flags'])
+        newspec['flux_photon'] = pflux
+        newspec['flux_photon_err'] = perror
     return newspec
 
 

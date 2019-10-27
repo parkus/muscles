@@ -162,7 +162,7 @@ def readstdfits(specfile):
     if 'phx' in specfile:
         spectbl['flux'].unit = ''
 
-        spectbl['w'] = (spectbl['w0'] + spectbl['w1'])/2
+    spectbl['w'] = (spectbl['w0'] + spectbl['w1'])/2
 
     return spectbl
 
@@ -284,6 +284,9 @@ def readfits(specfile, observatory=None, spectrograph=None):
         raise Exception('fits2tbl cannot parse data from the {} observatory.'.format(observatory))
 
     spec.close()
+
+    for tbl in spectbls:
+        tbl['w'] = (tbl['w0'] + tbl['w1'])/2.
 
     return spectbls
 
@@ -539,10 +542,11 @@ def __maketbl(data, specfile, sourcespecs=[]):
 def __trimHSTtbl(spectbl):
     """trim off-detector portions on either end of spectbl"""
     name = path.basename(spectbl.meta['FILENAME'])
+    dqcol = 'flags' if 'flags' in spectbl.colnames else 'dq'
     if '_cos_' in name:
-        bad = (spectbl['flags'] & 128) > 0
+        bad = (spectbl[dqcol] & 128) > 0
     elif '_sts_' in name:
-        bad = (spectbl['flags'] & (128 | 4)) > 0
+        bad = (spectbl[dqcol] & (128 | 4)) > 0
     elif '_fos_' in name:
         bad = np.zeros(len(spectbl), bool)
     beg,end = block_edges(bad)
